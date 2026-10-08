@@ -54,8 +54,8 @@ final class Settings {
 
     boolean updateCheck = true;
     long lastUpdateCheck;
-    /** LWJGL 2 key code; default Right Shift. */
-    int overlayKey = OverlayKeys.RSHIFT;
+    /** LWJGL 2 key code; 0 means no bind. */
+    int overlayKey = OverlayKeys.NONE;
 
     Settings(File gameDir) {
         file = new File(gameDir, "config/safedetect-settings.json");

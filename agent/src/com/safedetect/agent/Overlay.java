@@ -455,7 +455,7 @@ public final class Overlay implements SettingsPanel.Host {
                 applyModes();
             }
         }));
-        actions.add(new Glyph(Glyph.CLOSE, "Hide (Right Shift or /sd gui)", new Runnable() {
+        actions.add(new Glyph(Glyph.CLOSE, "Hide (reopen with /sd gui)", new Runnable() {
             @Override
             public void run() {
                 userHidden = true;

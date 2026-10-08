@@ -577,7 +577,7 @@ final class Detector {
             chat(self, "\u00a77/sd list [page] \u00a78saved flags");
             chat(self, "\u00a77/sd check <name> \u00a78one player, evidence and encounters");
             chat(self, "\u00a77/sd clear confirm \u00a78delete every saved player");
-            chat(self, "\u00a77/sd gui \u00a78reopen the lobby window \u00a78(Right Shift hides it; gear: themes, columns, alerts)");
+            chat(self, "\u00a77/sd gui \u00a78reopen the lobby window \u00a78(gear button: themes, columns, alerts)");
             chat(self, "\u00a77/sd update \u00a78download the latest jar (or press Update on the overlay)");
             chat(self, "\u00a77/sd checks [code on|off] \u00a78list or toggle checks");
             chat(self, "\u00a77/sd dodge [on|off] \u00a78dodge warnings in lobbies");
@@ -1399,11 +1399,12 @@ final class Detector {
     }
 
     private void overlayHotkey() {
-        if (settings == null || game.chatOpen()) {
+        int code = settings == null ? OverlayKeys.NONE : OverlayKeys.clamp(settings.overlayKey);
+        if (code <= 0 || game.chatOpen()) {
             overlayKeyDown = false;
             return;
         }
-        boolean down = game.keyDown(settings.overlayKey);
+        boolean down = game.keyDown(code);
         if (down && !overlayKeyDown) {
             Hud.toggle();
         }

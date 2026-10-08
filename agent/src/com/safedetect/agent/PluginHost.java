@@ -24,7 +24,7 @@ import java.util.jar.Manifest;
  * Loads builtin plugins plus drop-in jars, and fans chat/world/tab out to the ones that are on.
  */
 final class PluginHost {
-    static final String[] DEFAULT_ON = { "play" };
+    static final String[] DEFAULT_ON = { "play", "rq" };
 
     private final List<Loaded> all = new ArrayList<Loaded>();
     private final Set<String> enabled = new LinkedHashSet<String>();

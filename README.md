@@ -4,7 +4,7 @@ Personal **Hypixel Bedwars** util for **Lunar Client 1.8.9**. It watches nearby 
 
 It is **not** a Lunar mod. It loads with `-javaagent` on the 1.8.9 profile.
 
-Current version is the `Implementation-Version` in `agent/MANIFEST.MF` (1.2.0).
+Current version is the `Implementation-Version` in `agent/MANIFEST.MF` (1.3.0).
 
 ## What it does
 
@@ -57,7 +57,7 @@ Keep Lunar in **borderless fullscreen** so the overlay stays on top.
 
 ## First run
 
-1. Open the overlay (it should appear on its own; **Right Shift** hides or shows it, `/sd gui` brings it back).
+1. Open the overlay (it should appear on its own; `/sd gui` brings it back).
 2. Click **Keys** (or Gear → Keys) and paste a [Hypixel API key](https://developer.hypixel.net/) so stars / FKDR / WLR / nicks work.
 3. Optionally add Urchin, Aurora, anti-sniper, and Discord there too. Prefer the overlay: `/sd key …` is also sent to Hypixel as an unknown command.
 4. Gear → **Plugins** to enable add-ons (QuickPlay is on by default).
@@ -91,7 +91,6 @@ A red banner lists people worth dodging. Flagged players are pinned to the top b
 | Clear | Wipe every saved tracker name (needs confirm in chat if you use `/sd clear`) |
 | Keys | API keys without typing them in chat |
 | Opacity slider | Window transparency, when the system supports it |
-| Right Shift | Hide or show the overlay (changeable under Appearance). Ignored while chat is open |
 | `/sd gui` | Reopen if you hid or closed it |
 
 Row tooltips show evidence and last-flag time.
@@ -104,7 +103,7 @@ Gear opens six pages. Appearance and Columns are saved in the overlay process. A
 
 ### Appearance
 
-Theme (**Dark**, **Light**, **Classic Hypixel**, **High contrast**), accent colour, font size, row density, opacity, hide/show hotkey (default **Right Shift**), mini-mode filter (threats vs everyone), group by team, pin flagged first.
+Theme (**Dark**, **Light**, **Classic Hypixel**, **High contrast**), accent colour, font size, row density, opacity, optional hide/show hotkey (off by default), mini-mode filter (threats vs everyone), group by team, pin flagged first.
 
 ### Columns
 
@@ -245,7 +244,7 @@ Everything the agent understands starts with **`/sd`**. These are client-side, b
 | Command | What it does |
 | --- | --- |
 | `/sd` / `/sd help` | List commands |
-| `/sd gui` | Reopen the overlay (Right Shift also hides/shows it) |
+| `/sd gui` | Reopen the overlay |
 | `/sd list [page]` | Saved flags in chat |
 | `/sd check <name>` | One player: flags, evidence, encounters |
 | `/sd clear confirm` | Delete every saved player |
@@ -292,7 +291,8 @@ Everything the agent understands starts with **`/sd`**. These are client-side, b
 
 **Settings → Plugins** is the browser. Each card has an On/Off button, a short description, extra keys it needs, and its `/sd` commands.
 
-- **Off by default**, except **QuickPlay** (`play`), so `/sd play 2s` works immediately.
+- **Off by default**, except **QuickPlay** (`play`) and **Requeue** (`rq`), so `/sd play 2s` and `/sd rq` work immediately. Turn the rest on from the Plugins page.
+- Combat assists (auto W-tap, chat bypass, fake chat, nick hiders) are **not** bundled.
 - State is saved in `config/safedetect-plugins.json` (enabled ids + plugin config strings).
 - `/sd nickfind` while NickFind is off prints that it is off and how to enable it.
 
@@ -301,6 +301,7 @@ Everything the agent understands starts with **`/sd`**. These are client-side, b
 | Id | Name | Enable | Commands | Needs | What it does |
 | --- | --- | --- | --- | --- | --- |
 | `play` | QuickPlay | on by default | `/sd play 1s\|2s\|3s\|4s\|44s\|rush` | — | Queues Bedwars solos / doubles / 3s / 4s / 4v4 / doubles rush |
+| `rq` | Requeue | on by default | `/sd rq` | — | Manual `/play` of the last QuickPlay mode. Not auto-requeue |
 | `nickfind` | NickFind | `/sd plugins on nickfind` | `/sd nickfind setkey <key>` `/sd nickfind lookup <nick>` `/sd nickfind scan` | [Bedlify](https://api.bedlify.xyz/docs) API key | At Bedwars start (`Protect your bed…`), looks up version-1 (nicked) UUIDs and can suffix tab with the real name |
 | `duel` | DuelDesk | `/sd plugins on duel` | `/sd duel layout full\|minimal\|numbers` `/sd duel session` `/sd duel webhook <url>` `/sd duel clearwebhook` `/sd duel q <mode>` | Hypixel key; optional Discord webhook | Opponent stats on `Opponent:`, session W/L, webhook on win/loss (`[P]` party, `[RM]` rematch, `[D]` `/duel`, `[U]` other unranked). Queues: `classic`, `bridge`, `sw`, `uhc`, `op`, `sumo`, `combo`, `bow`, `nodebuff`, `blitz`, `mw`, `parkour`, `spleef`, `quake`, plus `*2s` / `uhc4s` / `bw` / `bwrush` |
 | `partywarn` | PartyWarn | `/sd plugins on partywarn` | `/sd partywarn` | Urchin key | After `/who`, `/pc` enemy cheater/sniper tags (skips party and friends) |
@@ -312,9 +313,25 @@ Everything the agent understands starts with **`/sd`**. These are client-side, b
 | `height` | HeightCall | `/sd plugins on height` | `/sd height <map>` | — | Looks up a Bedwars height limit; can announce it when you are sent to a known map |
 | `ses` | SessionPad | `/sd plugins on ses` | `/sd ses` `/sd ses reset\|pause\|resume\|share` | — | Separate Bedwars session W/L from chat (the overlay footer already tracks games/wins for Discord) |
 | `tags` | TagPeek | `/sd plugins on tags` | `/sd tags <name>` | Urchin key optional | One-off Urchin tag lookup without replacing tab |
-| `statcall` | StatCall | `/sd plugins on statcall` | `/sd statcall` | Hypixel key | If someone mentions you in pre-game chat, print their stars and FKDR |
+| `statcall` | StatCall | `/sd plugins on statcall` | `/sd statcall` `/sd statcall <name>` | Hypixel key | Lookup one player, or print stars/FKDR/beds/WS when someone mentions you in pre-game chat |
+| `talk` | TalkLine | `/sd plugins on talk` | `/sd talk` | Hypixel key | Same stats line for **anyone** who talks in a pre-game lobby (not in-game) |
+| `startab` | StarTab | `/sd plugins on startab` | `/sd startab` | Hypixel key | Stars and FKDR after names in tab. Display only — tab is never a cheat source |
+| `heat` | TeamHeat | `/sd plugins on heat` | `/sd heat` `/sd heat pc` | Hypixel key | After the game’s `/who`, rank enemy teams by combined stars and FKDR in chat (or party chat) |
+| `hunt` | PartyHunt | `/sd plugins on hunt` | `/sd hunt 2s 1 4` `/sd hunt stop` | Hypixel key | Sit in Bedwars lobby 1 and advertise for a fill; invite people who mention you above an FKDR floor |
+| `joins` | JoinPad | `/sd plugins on joins` | `/sd joins` | — | Party-of-N when a full party dumps into the lobby; extra ping if a skip-list friend joins. Does not leave |
+| `beep` | StartBeep | `/sd plugins on beep` | `/sd beep [20,10,5]` | — | Sound at those pre-game seconds and when the game starts |
+| `names` | NameLog | `/sd plugins on names` | `/sd names <ign>` | — | Past Minecraft names for an IGN |
+| `staff` | StaffWatch | `/sd plugins on staff` | `/sd staff add\|remove\|list <ign>` | — | Ping if a listed name or a staff/admin/GM rank is in tab. Alert only |
+| `freq` | FriendPeek | `/sd plugins on freq` | `/sd freq` | Hypixel key | Stars/FKDR when someone sends you a friend request |
+| `pchat` | PartyWire | `/sd plugins on pchat` | `/sd pchat` | — | `/chat p` when you join a party, `/chat a` when you leave |
+| `gens` | GenPad | `/sd plugins on gens` | `/sd gens` | — | Diamond/emerald spawn counts from a game-start clock (not inventory) |
+| `calc` | Calc | `/sd plugins on calc` | `/sd calc <expr>` | — | `+ - * /` and brackets (`x` is multiply) |
+| `afk` | AfkReply | `/sd plugins on afk` | `/sd afk [message\|off]` | — | While AFK, reply if someone says your name. Clears when the game starts |
+| `nickping` | NickPing | `/sd plugins on nickping` | `/sd nickping` | — | Lists version-1 (nicked) UUIDs at game start. Does not hide or spoof names |
+| `remind` | Remind | `/sd plugins on remind` | `/sd remind 90s <text>` `/sd remind list\|clear` | — | One-shot chat reminders |
+| `maps` | MapWarn | `/sd plugins on maps` | `/sd maps add\|remove\|list <map>` | — | Warns on maps you marked. Never auto-leaves |
 
-Core already covers Urchin tags, Aurora denick, auto `/who` at game start, overlay session games/wins, and dodge. Those are not duplicate plugins.
+Core already covers Urchin tags, Aurora denick, auto `/who` at game start, overlay session games/wins, and dodge warnings. Auto-requeue / auto-leave on high FKDR is **not** included. Stats lookups share a five-minute cache so the plugins do not stampede Hypixel.
 
 ### Sharing and writing a plugin
 

@@ -103,7 +103,8 @@ public final class UnitChecks {
                 LobbyIntel.nickConfidence(UUID.randomUUID(), "shown", null, true).startsWith("mid"));
         check("nick: real account empty",
                 LobbyIntel.nickConfidence(UUID.randomUUID(), "Steve", null, false).isEmpty());
-        check("overlay key default", "Right Shift".equals(OverlayKeys.name(OverlayKeys.RSHIFT)));
+        check("overlay key default is none", "None".equals(OverlayKeys.name(OverlayKeys.NONE)));
+        check("overlay key ignores legacy Right Shift", OverlayKeys.clamp(54) == OverlayKeys.NONE);
         Dodge off = new Dodge(false, true, true, true, 8.0, 0, 60);
         check("dodge: disabled", off.evaluate(false, true, true, "x", 99, 20, 900) == null);
         Dodge noBl = new Dodge(true, false, true, true, 0, 0, 0);
@@ -462,7 +463,62 @@ public final class UnitChecks {
         String catalog = host.catalogJson();
         check("plugins: catalog has nickfind", catalog.contains("\"id\":\"nickfind\""));
         check("plugins: catalog has play", catalog.contains("\"id\":\"play\""));
+        check("plugins: catalog has talk", catalog.contains("\"id\":\"talk\""));
+        check("plugins: catalog has startab", catalog.contains("\"id\":\"startab\""));
+        check("plugins: catalog has heat", catalog.contains("\"id\":\"heat\""));
+        check("plugins: catalog has hunt", catalog.contains("\"id\":\"hunt\""));
+        check("plugins: catalog has joins", catalog.contains("\"id\":\"joins\""));
+        check("plugins: catalog has beep", catalog.contains("\"id\":\"beep\""));
+        check("plugins: catalog has names", catalog.contains("\"id\":\"names\""));
+        check("plugins: catalog has staff", catalog.contains("\"id\":\"staff\""));
+        check("plugins: catalog has freq", catalog.contains("\"id\":\"freq\""));
+        check("plugins: catalog has pchat", catalog.contains("\"id\":\"pchat\""));
+        check("plugins: catalog has gens", catalog.contains("\"id\":\"gens\""));
+        check("plugins: catalog has calc", catalog.contains("\"id\":\"calc\""));
+        check("plugins: catalog has afk", catalog.contains("\"id\":\"afk\""));
+        check("plugins: catalog has nickping", catalog.contains("\"id\":\"nickping\""));
+        check("plugins: catalog has rq", catalog.contains("\"id\":\"rq\""));
+        check("plugins: catalog has remind", catalog.contains("\"id\":\"remind\""));
+        check("plugins: catalog has maps", catalog.contains("\"id\":\"maps\""));
+        check("calc: 4+4*2", Math.abs(CalcPlugin.eval("4+4*2") - 12.0) < 1e-9);
+        check("calc: (4+4)*2", Math.abs(CalcPlugin.eval("(4+4)*2") - 16.0) < 1e-9);
+        check("calc: 4x4", Math.abs(CalcPlugin.eval("4x4") - 16.0) < 1e-9);
+        check("calc: 4/6", Math.abs(CalcPlugin.eval("4/6") - (4.0 / 6.0)) < 1e-9);
+        boolean calcBad = false;
+        try {
+            CalcPlugin.eval("not-math");
+        } catch (IllegalArgumentException expected) {
+            calcBad = true;
+        }
+        check("calc: invalid", calcBad);
+        java.util.List<String> names = NameLogPlugin.parse(
+                "{\"username_history\":[{\"username\":\"Old\"},{\"username\":\"New\"}]}");
+        check("names: ashcon history", names.size() == 2 && "Old".equals(names.get(0)) && "New".equals(names.get(1)));
+        check("joins: doubles party is 2", JoinPadPlugin.partySize(16) == 2);
+        check("joins: 3s party is 3", JoinPadPlugin.partySize(12) == 3);
+        check("gens: 90s is 3 diamonds", GenPadPlugin.spawned(90000L, 30000) == 3);
+        check("gens: next diamond", GenPadPlugin.nextMs(10000L, 30000) == 20000);
+        check("remind: 90s", RemindPlugin.parseDuration("90s") == 90000);
+        check("remind: 2m", RemindPlugin.parseDuration("2m") == 120000);
+        check("remind: 1m30s", RemindPlugin.parseDuration("1m30s") == 90000);
+        check("staff: admin rank", StaffWatchPlugin.staffRank("\u00a7c[ADMIN] "));
+        check("staff: team letter is not staff", !StaffWatchPlugin.staffRank("\u00a7c[R] "));
+        String sample = "{\"success\":true,\"player\":{\"achievements\":{\"bedwars_level\":12},"
+                + "\"stats\":{\"Bedwars\":{\"final_kills_bedwars\":24,\"final_deaths_bedwars\":8,"
+                + "\"wins_bedwars\":10,\"losses_bedwars\":5,\"beds_broken_bedwars\":7,\"winstreak\":3}}}}";
+        BedStats bed = BedStats.parse(sample, "Steve");
+        check("bedstats: parse stars", bed != null && bed.stars == 12 && bed.beds == 7);
+        check("bedstats: parse fkdr", bed != null && Math.abs(bed.fkdr - 3.0) < 0.01);
+        check("bedstats: chat line", bed != null && bed.chatLine().contains("12") && bed.chatLine().contains("3.00"));
+        check("bedstats: tab suffix", bed != null && bed.tabSuffix().contains("\u272b"));
+        check("bedstats: higher fkdr is hotter",
+                new BedStats("a", 100, 0, 0, 0, 8.0, 2.0, false).threat() > new BedStats("b", 100, 0, 0, 0, 1.0, 2.0,
+                        false).threat());
+        check("bedstats: team letter from bracket", "R".equals(BedStats.teamLetter("\u00a7c[R] ")));
+        check("bedstats: team letter from colour", "B".equals(BedStats.teamLetter("\u00a79")));
+        check("bedstats: nicked player json", BedStats.parse("{\"success\":true,\"player\":null}", "x").nicked);
         check("plugins: play on by default", host.enabled("play"));
+        check("plugins: rq on by default", host.enabled("rq"));
         check("plugins: nickfind off by default", !host.enabled("nickfind"));
         host.setEnabled("nickfind", true);
         check("plugins: can enable nickfind", host.enabled("nickfind"));
@@ -470,7 +526,7 @@ public final class UnitChecks {
         check("plugins: catalog is JSON array", parsed instanceof java.util.List);
         @SuppressWarnings("unchecked")
         java.util.List<Object> list = (java.util.List<Object>) parsed;
-        check("plugins: at least 10 bundled", list.size() >= 10);
+        check("plugins: at least 30 bundled", list.size() >= 30);
         java.util.List<Hud.PluginCard> cards = Hud.readPlugins(parsed);
         check("plugins: card has id", !cards.isEmpty() && cards.get(0).id != null && !cards.get(0).id.isEmpty());
     }

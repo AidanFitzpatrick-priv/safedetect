@@ -29,6 +29,23 @@ final class PluginPack {
                 new SessionPadPlugin(),
                 new TagPeekPlugin(),
                 new StatsCallPlugin(),
+                new TalkLinePlugin(),
+                new StarTabPlugin(),
+                new TeamHeatPlugin(),
+                new PartyHuntPlugin(),
+                new JoinPadPlugin(),
+                new StartBeepPlugin(),
+                new NameLogPlugin(),
+                new StaffWatchPlugin(),
+                new FriendPeekPlugin(),
+                new PartyWirePlugin(),
+                new GenPadPlugin(),
+                new CalcPlugin(),
+                new AfkReplyPlugin(),
+                new NickPingPlugin(),
+                new RqPlugin(),
+                new RemindPlugin(),
+                new MapWarnPlugin(),
         };
     }
 
@@ -378,6 +395,8 @@ final class PluginPack {
             String mode = parts[2].toLowerCase(Locale.ROOT);
             for (String[] row : MODES) {
                 if (row[0].equals(mode)) {
+                    api.config("play.last", row[1]);
+                    api.config("play.lastName", row[2]);
                     api.send("/play " + row[1]);
                     api.chat("\u00a77Queueing \u00a7f" + row[2] + "\u00a77.");
                     return true;
@@ -708,13 +727,17 @@ final class PluginPack {
     static final class StatsCallPlugin extends Base implements PluginEvents {
         StatsCallPlugin() {
             super("statcall", "StatCall",
-                    "When someone mentions you in pre-game chat, look up their Bedwars FKDR.",
-                    "Hypixel API key", "/sd statcall");
+                    "Lookup `/sd statcall <name>`, or print stats when someone mentions you in lobby chat.",
+                    "Hypixel API key", "/sd statcall [name]");
         }
 
         @Override
         public boolean command(String[] parts) {
-            api.chat("\u00a77StatCall looks up anyone who mentions you in lobby chat.");
+            if (parts.length >= 3) {
+                lookup(parts[2]);
+                return true;
+            }
+            api.chat("\u00a77StatCall: \u00a7f/sd statcall <name>\u00a77, or mentions of you in pre-game chat.");
             return true;
         }
 
@@ -744,60 +767,21 @@ final class PluginPack {
             if (who.equalsIgnoreCase(me)) {
                 return;
             }
+            lookup(who);
+        }
+
+        private void lookup(final String who) {
             new Thread(new Runnable() {
                 @Override
                 public void run() {
-                    String key = api.hypixelKey();
-                    if (key.isEmpty()) {
+                    BedStats stats = StatsMemo.get(api, who);
+                    if (stats == null) {
+                        api.chat("\u00a77No stats for \u00a7f" + who);
                         return;
                     }
-                    String mojang = api.httpGet(
-                            "https://api.mojang.com/users/profiles/minecraft/" + encode(who), null, null);
-                    String uuid = jsonId(mojang);
-                    if (uuid == null) {
-                        return;
-                    }
-                    String raw = api.httpGet("https://api.hypixel.net/v2/player?uuid=" + uuid, "API-Key", key);
-                    if (raw == null) {
-                        return;
-                    }
-                    try {
-                        Object player = ((Map<?, ?>) Json.parse(raw)).get("player");
-                        Map<?, ?> bw = player instanceof Map
-                                ? (Map<?, ?>) ((Map<?, ?>) ((Map<?, ?>) player).get("stats")).get("Bedwars")
-                                : null;
-                        if (bw == null) {
-                            return;
-                        }
-                        int stars = player instanceof Map && ((Map<?, ?>) player).get("achievements") instanceof Map
-                                ? num((Map<?, ?>) ((Map<?, ?>) player).get("achievements"), "bedwars_level")
-                                : 0;
-                        int fk = num(bw, "final_kills_bedwars");
-                        int fd = num(bw, "final_deaths_bedwars");
-                        double fkdr = fd > 0 ? fk / (double) fd : fk;
-                        api.chat("\u00a77" + who + " \u00a78" + stars + "\u272b \u00a77FKDR \u00a7f"
-                                + String.format(Locale.US, "%.2f", Double.valueOf(fkdr)));
-                    } catch (Throwable ignored) {
-                    }
+                    api.chat(stats.chatLine());
                 }
             }, "sd-statcall").start();
-        }
-
-        private static int num(Map<?, ?> map, String key) {
-            Object value = map.get(key);
-            return value instanceof Number ? ((Number) value).intValue() : 0;
-        }
-
-        @SuppressWarnings("unchecked")
-        private static String jsonId(String json) {
-            try {
-                Object parsed = Json.parse(json);
-                if (parsed instanceof Map && ((Map<String, Object>) parsed).get("id") instanceof String) {
-                    return (String) ((Map<String, Object>) parsed).get("id");
-                }
-            } catch (Throwable ignored) {
-            }
-            return null;
         }
     }
 

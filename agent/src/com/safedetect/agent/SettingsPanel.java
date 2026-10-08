@@ -363,7 +363,7 @@ final class SettingsPanel extends JPanel {
 
         form.section("Hotkey");
         final JComboBox<String> hideKey = Ui.combo(theme, OverlayKeys.NAMES);
-        hideKey.setSelectedIndex(OverlayKeys.indexOf((int) Overlay.optionNumber("overlayKey", OverlayKeys.RSHIFT)));
+        hideKey.setSelectedIndex(OverlayKeys.indexOf((int) Overlay.optionNumber("overlayKey", OverlayKeys.NONE)));
         hideKey.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent event) {
@@ -380,10 +380,10 @@ final class SettingsPanel extends JPanel {
 
             @Override
             public void load() {
-                hideKey.setSelectedIndex(OverlayKeys.indexOf((int) Overlay.optionNumber("overlayKey", OverlayKeys.RSHIFT)));
+                hideKey.setSelectedIndex(OverlayKeys.indexOf((int) Overlay.optionNumber("overlayKey", OverlayKeys.NONE)));
             }
         });
-        form.row("Hide overlay", "In Minecraft, not while chat is open. /sd gui also reopens it",
+        form.row("Hide overlay", "Off unless you pick a key. Ignored while chat is open. /sd gui reopens it",
                 sized(Ui.boxed(theme, hideKey), 160));
 
         form.section("Layout");
