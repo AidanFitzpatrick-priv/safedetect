@@ -9,23 +9,28 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Urchin (Coral) and optional Seraph community tags. Off the client thread.
+ * Urchin (Coral) community tags. Off the client thread.
  */
 final class Tags {
     static final class Result {
         final UUID id;
         final String name;
+        /** "U" Urchin. */
+        final String source;
         final String labels;
         final int score;
 
-        Result(UUID id, String name, String labels, int score) {
+        Result(UUID id, String name, String source, String labels, int score) {
             this.id = id;
             this.name = name;
+            this.source = source;
             this.labels = labels;
             this.score = score;
         }
@@ -34,12 +39,14 @@ final class Tags {
     private static final class Job {
         final String url;
         final String headerKey;
+        final String source;
         final UUID id;
         final String name;
 
-        Job(String url, String headerKey, UUID id, String name) {
+        Job(String url, String headerKey, String source, UUID id, String name) {
             this.url = url;
             this.headerKey = headerKey;
+            this.source = source;
             this.id = id;
             this.name = name;
         }
@@ -57,21 +64,7 @@ final class Tags {
         try {
             String url = "https://api.urchin.gg/v3/cubelify?uuid=" + id.toString().replace("-", "")
                     + "&key=" + URLEncoder.encode(key, "UTF-8");
-            return submit(url, key, id, name);
-        } catch (Exception ignored) {
-            return true;
-        }
-    }
-
-    /** False when the queue is full, so the caller can retry later. */
-    boolean seraph(String key, UUID id, String name) {
-        if (key == null || key.isEmpty() || id == null) {
-            return true;
-        }
-        try {
-            String url = "https://api.seraph.si/v1/player?uuid=" + id.toString()
-                    + "&key=" + URLEncoder.encode(key, "UTF-8");
-            return submit(url, key, id, name);
+            return submit(url, key, "U", id, name);
         } catch (Exception ignored) {
             return true;
         }
@@ -81,9 +74,9 @@ final class Tags {
         return results.poll();
     }
 
-    private boolean submit(String url, String key, UUID id, String name) {
+    private boolean submit(String url, String key, String source, UUID id, String name) {
         start();
-        return jobs.offer(new Job(url, key, id, name));
+        return jobs.offer(new Job(url, key, source, id, name));
     }
 
     private synchronized void start() {
@@ -161,7 +154,7 @@ final class Tags {
             if ((labels == null || labels.isEmpty()) && score < 0) {
                 return null;
             }
-            return new Result(job.id, job.name, labels == null ? "" : labels, score);
+            return new Result(job.id, job.name, job.source, labels == null ? "" : labels, score);
         } catch (Throwable thrown) {
             Log.once("tags fetch", thrown);
             return null;
@@ -205,5 +198,48 @@ final class Tags {
             return t;
         }
         return t.substring(0, 10);
+    }
+
+    static String sourceName(String source) {
+        if ("U".equals(source)) {
+            return "Urchin";
+        }
+        return "SD";
+    }
+
+    /** Turns `[Cheater]` into `[U:Cheater]` so overlay chips show the source. */
+    static String brand(String prefix, String labels) {
+        if (labels == null || labels.trim().isEmpty()) {
+            return "";
+        }
+        Matcher matcher = Pattern.compile("\\[([^\\]]+)\\]").matcher(labels);
+        StringBuffer out = new StringBuffer();
+        boolean any = false;
+        while (matcher.find()) {
+            any = true;
+            String inner = matcher.group(1).trim();
+            if (!inner.startsWith("SD:") && !inner.startsWith("U:")) {
+                inner = prefix + ":" + inner;
+            }
+            matcher.appendReplacement(out, Matcher.quoteReplacement("[" + inner + "]"));
+        }
+        matcher.appendTail(out);
+        if (any) {
+            return out.toString().trim();
+        }
+        return "[" + prefix + ":" + labels.trim() + "]";
+    }
+
+    static String merge(String left, String right) {
+        if (right == null || right.isEmpty()) {
+            return left == null ? "" : left;
+        }
+        if (left == null || left.isEmpty()) {
+            return right;
+        }
+        if (left.contains(right)) {
+            return left;
+        }
+        return left + " " + right;
     }
 }

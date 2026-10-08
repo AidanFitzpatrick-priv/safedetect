@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@code safedetect-cmd/}. Each command file is renamed into place complete, and only the game deletes it.
  */
 final class Hud {
-    static final String[] KEY_NAMES = { "hypixel", "sniperKey", "sniperUrl", "urchin", "seraph", "aurora", "discord" };
+    static final String[] KEY_NAMES = { "hypixel", "sniperKey", "sniperUrl", "urchin", "aurora", "discord" };
 
     static final class Row {
         final String name;

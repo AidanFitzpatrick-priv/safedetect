@@ -76,6 +76,11 @@ public final class UnitChecks {
         check("dodge: blacklisted", "blacklisted".equals(rules.evaluate(false, true, false, "", -1, -1, -1)));
         check("dodge: flagged", "flagged".equals(rules.evaluate(false, false, true, "", -1, -1, -1)));
         check("dodge: tagged", rules.evaluate(false, false, false, "Closet", -1, -1, -1).startsWith("tagged"));
+        check("dodge: urchin", "Urchin [U:Closet]".equals(rules.evaluate(false, false, false, "[U:Closet]", -1, -1, -1)));
+        check("check meaning killaura", CheckConfig.meaning(FlagStore.Flag.KA).length() > 8);
+        check("tag brand urchin", "[U:Cheater]".equals(Tags.brand("U", "[Cheater]")));
+        check("tag brand sd", "[SD:AB] [SD:SN]".equals(Tags.brand("SD", "[AB] [SN]")));
+        check("tag brand already prefixed", "[U:Cheater]".equals(Tags.brand("U", "[U:Cheater]")));
         check("dodge: sniper", "sniper 75".equals(rules.evaluate(false, false, false, "", 75, -1, -1)));
         check("dodge: high FKDR", "9.5 FKDR".equals(rules.evaluate(false, false, false, "", -1, 9.5, 300)));
         check("dodge: FKDR below star minimum", rules.evaluate(false, false, false, "", -1, 9.5, 50) == null);

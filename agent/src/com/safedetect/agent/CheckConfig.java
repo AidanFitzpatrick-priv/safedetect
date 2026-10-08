@@ -97,7 +97,59 @@ final class CheckConfig {
             case AB: return "AutoBlock";
             case NS: return "NoSlow";
             case DS: return "Diagonal Scaffold";
+            case SN: return "Sniper";
+            case SM: return "Smurf";
+            case NK: return "Nicked";
+            case FK: return "High FKDR";
+            case AL: return "Alt";
             default: return flag.name();
         }
     }
+
+    static String meaning(FlagStore.Flag flag) {
+        switch (flag) {
+            case KA: return "Hits you while looking somewhere else.";
+            case SI: return "Hits you without turning their head.";
+            case RE: return "Hits from further than vanilla reach.";
+            case AC: return "Clicks faster than a person usually can.";
+            case AB: return "Swings the sword while blocking.";
+            case NS: return "Full walk speed while using an item (bow, food, rod).";
+            case VL: return "Takes no knockback when you hit them.";
+            case SA: return "Instant large look snaps when they swing.";
+            case SP: return "Moves faster than vanilla sprinting allows.";
+            case LS: return "Scripted sneak-place bridging (same crouch rhythm).";
+            case SS: return "Sprints while bridging backwards.";
+            case GB: return "God-bridges without sneaking.";
+            case DS: return "Sprint-bridges on a diagonal.";
+            case TL: return "Telly-bridging: fast pitch flicks while placing.";
+            case TW: return "Towers up faster than placing should allow.";
+            case SN: return "Known sniper name or sniper-looking stats.";
+            case NK: return "Nicked account (Hypixel nick).";
+            case FK: return "Very high Bedwars FKDR.";
+            case AL: return "Name looks like an alt of someone already flagged.";
+            default: return "";
+        }
+    }
+
+    /** Overlay chips that are not live checks. */
+    static final String[][] OTHER_SD = {
+            { "SD:SN", "Sniper name list or sniper-looking stats." },
+            { "SD:NK", "Nicked account." },
+            { "SD:FK", "Sweat: high stars and FKDR." },
+            { "SD:AL", "Possible alt of a player you already flagged." },
+            { "SD:BL", "On your local blacklist (overlay click or /sd bl)." },
+    };
+
+    /** Urchin community tags. Overlay chips are U: plus a short label. */
+    static final String[][] URCHIN = {
+            { "U:Account", "Account note from Urchin, not a cheat tag." },
+            { "U:Info", "Staff/community note. Not necessarily cheating." },
+            { "U:Caution", "Weak warning. Treat as a maybe." },
+            { "U:Possible Sniper", "Might be lobby sniping." },
+            { "U:Sniper", "Tagged as a sniper." },
+            { "U:Legit Sniper", "High-skill sniper (stats), not a cheat client." },
+            { "U:Closet Cheater", "Suspected hidden cheats. Usually right, some falses." },
+            { "U:Blatant Cheater", "Obvious cheating." },
+            { "U:Confirmed Cheater", "Staff reviewed with evidence. Most reliable Urchin tag." },
+    };
 }

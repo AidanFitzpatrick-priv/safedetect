@@ -54,7 +54,7 @@ final class SettingsPanel extends JPanel {
             "Theme, colours and how the list is laid out.",
             "Pick which stats show in the lobby list and in what order.",
             "What happens in game when someone is flagged or worth dodging.",
-            "Turn single checks on or off and tune how strict they are.",
+            "What each flag means, plus Urchin tags. Turn checks on or off here.",
             "Keys go straight to the game and are never shown again.",
     };
     static final String[][] KEY_FIELDS = {
@@ -62,7 +62,6 @@ final class SettingsPanel extends JPanel {
             { "sniperKey", "Anti-sniper key" },
             { "sniperUrl", "Anti-sniper URL" },
             { "urchin", "Urchin key" },
-            { "seraph", "Seraph key" },
             { "aurora", "Aurora key" },
             { "discord", "Discord app id" },
     };
@@ -644,7 +643,7 @@ final class SettingsPanel extends JPanel {
         form.row("Dodge warnings", "One chat line, sound and title per player per lobby", gameToggle("dodgeEnabled"));
         form.row("Blacklisted players", null, gameToggle("dodgeBlacklist"));
         form.row("Flagged in an earlier game", null, gameToggle("dodgeFlagged"));
-        form.row("Urchin / Seraph tags", null, gameToggle("dodgeTags"));
+        form.row("Urchin tags", "Dodge when Urchin has tagged them", gameToggle("dodgeTags"));
         form.row("FKDR at least", "0 turns this rule off", gameSpinner("dodgeFkdr", 0, 100, 0.5, false));
         form.row("Stars at least", "Only for the FKDR rule", gameSpinner("dodgeStars", 0, 5000, 50, true));
         form.row("Sniper score at least", "0 turns this rule off", gameSpinner("dodgeSniper", 0, 100, 5, true));
@@ -663,10 +662,13 @@ final class SettingsPanel extends JPanel {
             cell.setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createMatteBorder(i < 2 ? 0 : 1, 0, 0, 0, theme.rowLine),
                     BorderFactory.createEmptyBorder(8, 0, 8, 0)));
-            JPanel names = Ui.row(6);
+            JPanel names = new JPanel(new GridLayout(3, 1, 0, 1));
+            names.setOpaque(false);
             names.add(Ui.label(theme, CheckConfig.label(flag), theme.small, theme.fg));
-            names.add(Ui.label(theme, flag.name(), theme.caption, theme.muted));
-            cell.add(names, BorderLayout.WEST);
+            names.add(Ui.label(theme, "SD:" + flag.name(), theme.caption, theme.muted));
+            names.add(Ui.label(theme, CheckConfig.meaning(flag),
+                    theme.small.deriveFont(theme.small.getSize2D() - 1f), theme.muted));
+            cell.add(names, BorderLayout.CENTER);
             cell.add(gameToggle("check." + flag.name()), BorderLayout.EAST);
             grid.add(cell);
         }
@@ -698,6 +700,15 @@ final class SettingsPanel extends JPanel {
         form.row("Killaura angle", "Degrees", gameSpinner("kaAngle", 30, 180, 5, true));
         form.row("Autoclicker CPS", "Minimum clicks per second", gameSpinner("acMinCps", 8, 30, 1, true));
         form.row("Speed limit", "Blocks per tick", gameSpinner("speedLimit", 0.3, 1.5, 0.01, false));
+        form.section("Other SafeDetect tags");
+        for (int i = 0; i < CheckConfig.OTHER_SD.length; i++) {
+            form.gloss(CheckConfig.OTHER_SD[i][0], CheckConfig.OTHER_SD[i][1]);
+        }
+        form.section("Urchin tags");
+        form.gloss("Needs an Urchin key", "Chips start with U:. Most lobby players have none. Short labels on the overlay are the start of the full tag name.");
+        for (int i = 0; i < CheckConfig.URCHIN.length; i++) {
+            form.gloss(CheckConfig.URCHIN[i][0], CheckConfig.URCHIN[i][1]);
+        }
         return form.page;
     }
 
@@ -953,6 +964,19 @@ final class SettingsPanel extends JPanel {
             controlBox.add(control);
             line.add(controlBox, BorderLayout.EAST);
             addToCard(line, 9);
+        }
+
+        void gloss(String title, String body) {
+            JPanel line = new JPanel(new BorderLayout(12, 0));
+            line.setOpaque(false);
+            JPanel labels = new JPanel(new GridLayout(body == null ? 1 : 2, 1, 0, 1));
+            labels.setOpaque(false);
+            labels.add(Ui.label(theme, title, theme.small.deriveFont(theme.small.getSize2D() + 0.5f), theme.fg));
+            if (body != null) {
+                labels.add(Ui.label(theme, body, theme.small.deriveFont(theme.small.getSize2D() - 1f), theme.muted));
+            }
+            line.add(labels, BorderLayout.CENTER);
+            addToCard(line, 8);
         }
 
         void full(JComponent control) {

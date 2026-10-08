@@ -29,7 +29,6 @@ final class Settings {
     String sniperUrl = "";
     boolean borderless = true;
     String urchinKey = "";
-    String seraphKey = "";
     String discordAppId = "";
     String auroraKey = "";
     boolean tabMarks = true;
@@ -122,11 +121,6 @@ final class Settings {
 
     void setUrchin(String key) {
         urchinKey = key == null ? "" : key.trim();
-        save();
-    }
-
-    void setSeraph(String key) {
-        seraphKey = key == null ? "" : key.trim();
         save();
     }
 
@@ -353,9 +347,6 @@ final class Settings {
         if ("urchin".equals(name)) {
             return urchinKey;
         }
-        if ("seraph".equals(name)) {
-            return seraphKey;
-        }
         if ("aurora".equals(name)) {
             return auroraKey;
         }
@@ -375,8 +366,6 @@ final class Settings {
             setSniperUrl(value);
         } else if ("urchin".equals(name)) {
             setUrchin(value);
-        } else if ("seraph".equals(name)) {
-            setSeraph(value);
         } else if ("aurora".equals(name)) {
             setAurora(value);
         } else if ("discord".equals(name)) {
@@ -415,7 +404,6 @@ final class Settings {
             sniperUrl = strOf(map, "sniperUrl", sniperUrl);
             borderless = boolOf(map, "borderless", borderless);
             urchinKey = strOf(map, "urchinKey", urchinKey);
-            seraphKey = strOf(map, "seraphKey", seraphKey);
             discordAppId = strOf(map, "discordAppId", discordAppId);
             auroraKey = strOf(map, "auroraKey", auroraKey);
             tabMarks = boolOf(map, "tabMarks", tabMarks);
@@ -493,7 +481,6 @@ final class Settings {
         line(out, "sniperUrl", Json.quote(sniperUrl == null ? "" : sniperUrl));
         line(out, "borderless", String.valueOf(borderless));
         line(out, "urchinKey", Json.quote(urchinKey == null ? "" : urchinKey));
-        line(out, "seraphKey", Json.quote(seraphKey == null ? "" : seraphKey));
         line(out, "discordAppId", Json.quote(discordAppId == null ? "" : discordAppId));
         line(out, "auroraKey", Json.quote(auroraKey == null ? "" : auroraKey));
         line(out, "tabMarks", String.valueOf(tabMarks));

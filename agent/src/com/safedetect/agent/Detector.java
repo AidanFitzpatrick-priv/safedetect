@@ -345,7 +345,7 @@ final class Detector {
             if (name != null && !tags.isEmpty()) {
                 alert(self, name + " \u00a77marked " + tags, Hud.wdr(name));
             } else if (name != null && blacklist != null && blacklist.contains(name)) {
-                alert(self, "tagged: \u00a7f" + name + " \u00a7c[BL]", Hud.wdr(name));
+                alert(self, "SD blacklist: \u00a7f" + name + " \u00a7c[SD:BL]", Hud.wdr(name));
             }
             requestIntel(id, name);
         }
@@ -589,7 +589,7 @@ final class Detector {
                 if ("hypixel".equals(entry.getKey())) {
                     lookedUp.clear();
                     lookupFailures.clear();
-                } else if ("urchin".equals(entry.getKey()) || "seraph".equals(entry.getKey())) {
+                } else if ("urchin".equals(entry.getKey())) {
                     tagLooked.clear();
                 } else if (entry.getKey().startsWith("sniper")) {
                     sniperLooked.clear();
@@ -628,8 +628,7 @@ final class Detector {
             chat(self, "\u00a77/sd key <hypixel-api-key> \u00a78nicks + FKDR");
             chat(self, "\u00a77/sd sniper <key|url|off> \u00a78anti-sniper");
             chat(self, "\u00a77/sd borderless \u00a78keep overlay on top");
-            chat(self, "\u00a77/sd urchin <key> \u00a78Prism cheater tags");
-            chat(self, "\u00a77/sd seraph <key> \u00a78Seraph tags");
+            chat(self, "\u00a77/sd urchin <key> \u00a78Urchin cheater tags");
             chat(self, "\u00a77/sd nick <shown> <real> \u00a78denick a teammate");
             chat(self, "\u00a77/sd discord <app-id> \u00a78session presence");
             chat(self, "\u00a77/sd bl <add|remove|list|import> \u00a78local blacklist");
@@ -763,24 +762,6 @@ final class Detector {
             }
             settings.setUrchin(parts[2]);
             chat(self, "\u00a77Urchin key saved. Lobby players will be tagged.");
-            keyWarning(self);
-            return;
-        }
-        if ("seraph".equals(sub)) {
-            if (settings == null) {
-                return;
-            }
-            if (parts.length < 3) {
-                chat(self, "\u00a77Usage: /sd seraph <api-key>");
-                return;
-            }
-            if ("off".equalsIgnoreCase(parts[2]) || "clear".equalsIgnoreCase(parts[2])) {
-                settings.setSeraph("");
-                chat(self, "\u00a77Seraph off.");
-                return;
-            }
-            settings.setSeraph(parts[2]);
-            chat(self, "\u00a77Seraph key saved.");
             keyWarning(self);
             return;
         }
@@ -996,7 +977,11 @@ final class Detector {
                 continue;
             }
             int times = record.times > 0 ? record.times : record.flags.size();
-            Hud.Row row = new Hud.Row(label, store.plainTags(record), times, Hud.lastLabel(record),
+            String tags = Tags.brand("SD", store.plainTags(record));
+            if (blacklist != null && blacklist.contains(label)) {
+                tags = Tags.merge(tags, "[SD:BL]");
+            }
+            Hud.Row row = new Hud.Row(label, tags, times, Hud.lastLabel(record),
                     record.lastCheckAt);
             row.blacklisted = blacklist != null && blacklist.contains(label);
             row.friend = skipped(label);
@@ -1297,10 +1282,12 @@ final class Detector {
                 intel.put(result.id, info);
             }
             if (result.labels != null && !result.labels.isEmpty()) {
-                info.extra = result.labels;
+                String branded = Tags.brand(result.source, result.labels);
+                info.extra = Tags.merge(info.extra, branded);
                 if (tagAnnounced.add(result.id)) {
                     String who = result.name != null ? result.name : result.id.toString();
-                    alert(self, "tagged: \u00a7f" + who + " \u00a7c" + result.labels, Hud.wdr(who));
+                    alert(self, Tags.sourceName(result.source) + ": \u00a7f" + who + " \u00a7c" + branded,
+                            Hud.wdr(who));
                 }
             }
             if (result.score > info.sniper) {
@@ -1589,14 +1576,14 @@ final class Detector {
             requestIntel(id, name);
         }
         FlagStore.Record record = store.get(id, name);
-        String tags = store.plainTags(record);
+        String tags = Tags.brand("SD", store.plainTags(record));
         boolean listed = blacklist != null && blacklist.contains(name);
         if (listed) {
-            tags = tags == null || tags.isEmpty() ? "[BL]" : "[BL] " + tags;
+            tags = Tags.merge(tags, "[SD:BL]");
         }
         Intel info = intelFor(id, name);
         if (info != null && info.extra != null && !info.extra.isEmpty()) {
-            tags = tags == null || tags.isEmpty() ? info.extra : tags + " " + info.extra;
+            tags = Tags.merge(tags, info.extra);
         }
         String label = name != null ? name : id.toString();
         int times = record != null && record.times > 0 ? record.times : 0;
@@ -1713,9 +1700,6 @@ final class Detector {
             boolean queued = true;
             if (settings.urchinKey != null && !settings.urchinKey.isEmpty()) {
                 queued &= tagsApi.urchin(settings.urchinKey, id, name);
-            }
-            if (settings.seraphKey != null && !settings.seraphKey.isEmpty()) {
-                queued &= tagsApi.seraph(settings.seraphKey, id, name);
             }
             if (!queued) {
                 tagLooked.remove(id);

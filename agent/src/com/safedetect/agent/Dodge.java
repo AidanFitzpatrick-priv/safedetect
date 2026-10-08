@@ -35,7 +35,7 @@ final class Dodge {
     /**
      * Short reason to dodge, or null. Unknown stats are negative and never trigger a rule.
      *
-     * @param apiTags Urchin or Seraph labels, empty when none
+     * @param apiTags Urchin labels, empty when none
      */
     String evaluate(boolean friend, boolean blacklisted, boolean cheat, String apiTags, int sniperScore,
             double playerFkdr, int playerStars) {
@@ -49,7 +49,11 @@ final class Dodge {
             return "flagged";
         }
         if (tags && apiTags != null && !apiTags.trim().isEmpty()) {
-            return "tagged " + apiTags.trim();
+            String body = apiTags.trim();
+            if (body.contains("[U:")) {
+                return "Urchin " + body;
+            }
+            return "tagged " + body;
         }
         if (sniper > 0 && sniperScore >= sniper) {
             return "sniper " + sniperScore;

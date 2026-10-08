@@ -1480,11 +1480,16 @@ public final class Overlay implements SettingsPanel.Host {
             }
             background = bg;
             setBorder(border);
-            setToolTipText(tip);
+            String legend = "SD = SafeDetect   U = Urchin";
+            setToolTipText(tip == null || tip.isEmpty() ? legend : tip + "  \u00b7  " + legend);
         }
 
         private Color tone(String tag) {
-            if ("NK".equals(tag) || "SN".equals(tag) || "FK".equals(tag)) {
+            if (tag.startsWith("U:")) {
+                return theme.accent;
+            }
+            String inner = tag.startsWith("SD:") ? tag.substring(3) : tag;
+            if (inner.startsWith("NK") || inner.startsWith("SN") || inner.startsWith("FK")) {
                 return theme.warn;
             }
             return theme.danger;

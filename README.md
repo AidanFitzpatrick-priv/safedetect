@@ -34,7 +34,7 @@ By hand:
 
 Stars / FKDR / WLR need a Hypixel API key from [developer.hypixel.net](https://developer.hypixel.net/).
 
-Set it with the **Keys** button in the overlay footer, which opens the Keys page of the settings panel. The same page takes the anti-sniper, Urchin, Seraph, Aurora and Discord values. Blank fields are left unchanged, and **Clear all** removes every key.
+Set it with the **Keys** button in the overlay footer, which opens the Keys page of the settings panel. The same page takes the anti-sniper, Urchin, Aurora and Discord values. Blank fields are left unchanged, and **Clear all** removes every key.
 
 `/sd key YOUR_KEY` still works, but SafeDetect can't stop chat commands from also being sent to the server, so the key reaches Hypixel as an unknown command. Prefer the overlay.
 
@@ -64,7 +64,7 @@ The settings panel has five pages:
 - **Appearance:** theme (Dark, Light, Classic Hypixel, High contrast), accent colour, font size, row density, opacity, mini-mode filter, group by team, pin flagged first.
 - **Columns:** pick, order and reset columns (level, name, team, flags, winstreak, FKDR, WLR, finals, wins, sniper, seen, last flag).
 - **Alerts:** tab marks, chat alerts, sound, borderless, update check, and the dodge rules and thresholds.
-- **Checks:** turn single checks on or off, pick a sensitivity (lenient, normal, strict), and tune reach, aura angle, CPS and speed limits.
+- **Checks:** turn single checks on or off, read what each SD and Urchin tag means, pick a sensitivity (lenient, normal, strict), and tune reach, aura angle, CPS and speed limits.
 - **Keys:** API keys.
 
 Overlay layout is saved in `config/safedetect-overlay.json`; game options live in `config/safedetect-settings.json`.
@@ -73,7 +73,7 @@ Drag it from the **SafeDetect** title / Lobby-Saved tabs, not from the buttons.
 
 ## Dodge warnings
 
-When a lobby player is blacklisted, has a saved cheat flag from an earlier game, has an Urchin/Seraph tag, scores at or above the sniper threshold (default 60), or has an FKDR at or above the threshold (default 8, with an optional star minimum), you get one warning per player per world: a red `DODGE?` chat line, a quiet sound and a title. Each rule can be turned off in **Alerts**, or all of them with `/sd dodge off`.
+When a lobby player is blacklisted, has a saved cheat flag from an earlier game, has an Urchin tag, scores at or above the sniper threshold (default 60), or has an FKDR at or above the threshold (default 8, with an optional star minimum), you get one warning per player per world: a red `DODGE?` chat line, a quiet sound and a title. Each rule can be turned off in **Alerts**, or all of them with `/sd dodge off`.
 
 ## Evidence and history
 
@@ -101,7 +101,7 @@ SafeDetect also counts how often you have been in a game with each player (once 
 /sd reload                 re-read settings, blacklist, flags and encounters after editing them by hand
 ```
 
-Optional: `/sd urchin`, `/sd seraph`, `/sd aurora`, `/sd sniper`, `/sd discord`.
+Optional: `/sd urchin`, `/sd aurora`, `/sd sniper`, `/sd discord`.
 
 Once a day SafeDetect checks GitHub for a newer release and prints a clickable line if there is one. Turn it off under **Alerts** → Update check.
 
