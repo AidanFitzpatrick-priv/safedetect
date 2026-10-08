@@ -52,8 +52,11 @@ public class Minecraft {
         return Thread.currentThread() == mcThread;
     }
 
+    /** Null until a scenario needs a tab list, so earlier scenarios see no tab. */
+    public NetHandlerPlayClient netHandler;
+
     public NetHandlerPlayClient getNetHandler() {
-        return null;
+        return netHandler;
     }
 
     public GuiChat openChat() {

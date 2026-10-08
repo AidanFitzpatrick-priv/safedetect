@@ -3,14 +3,23 @@ package sdtest;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityOtherPlayerMP;
 import net.minecraft.client.entity.EntityPlayerSP;
+import net.minecraft.client.gui.GuiChat;
+import net.minecraft.client.gui.GuiNewChat;
+import com.mojang.authlib.GameProfile;
 import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.network.NetHandlerPlayClient;
+import net.minecraft.client.network.NetworkPlayerInfo;
+import net.minecraft.scoreboard.ScorePlayerTeam;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.potion.PotionEffect;
 import net.minecraft.util.BlockPos;
+import net.minecraft.util.ChatComponentText;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -247,6 +256,15 @@ public final class MockGame {
             frames(mc);
         }
 
+        GuiNewChat chatGui = mc.ingameGUI.getChatGUI();
+        for (int i = 0; i < 105; i++) {
+            chatGui.printChatMessage(new ChatComponentText("Filler server line " + i));
+        }
+        chatGui.printChatMessage(new ChatComponentText("[MVP+] Ghosty has joined (2/16)!"));
+        chatGui.printChatMessage(new ChatComponentText("[MVP+] Spoofer: VICTORY!"));
+        ticks(mc, world, 3);
+        self.chat.add("HUD_GAME " + hud(dataDir));
+
         WorldClient lobby = new WorldClient();
         world.playerEntities.remove(self);
         self.worldObj = lobby;
@@ -262,18 +280,23 @@ public final class MockGame {
             lobbySpeeder.posX += 0.8;
             frames(mc);
         }
-        self.sendChatMessage("/sd");
-        frames(mc);
-        self.sendChatMessage("/sd friends");
-        frames(mc);
-        self.sendChatMessage("/sd friend UnitTest");
-        frames(mc);
-        self.sendChatMessage("/sd list");
-        frames(mc);
-        self.sendChatMessage("/sd check Wemzy_on_top");
-        frames(mc);
-        self.sendChatMessage("/sd clear");
-        frames(mc);
+        self.chat.add("HUD_LOBBY " + hud(dataDir));
+        send(mc, self, "/sd");
+        send(mc, self, "/sd friends");
+        send(mc, self, "/sd friend UnitTest");
+        send(mc, self, "/sd list");
+        send(mc, self, "/sd list");
+        send(mc, self, "/sd check Wemzy_on_top");
+        send(mc, self, "/sd clear");
+
+        File cmdDir = new File(dataDir, "config/safedetect-cmd");
+        cmdDir.mkdirs();
+        Files.write(new File(cmdDir, "0000000000001-000001.json").toPath(),
+                "{\"keys\":{\"sniperUrl\":\"http://127.0.0.1:1/SECRET123/{{name}}\"}}".getBytes(StandardCharsets.UTF_8));
+        for (int i = 0; i < 5; i++) {
+            frames(mc);
+            Thread.sleep(40);
+        }
         String copy = null;
         for (String line : self.chat) {
             String plain = line.replaceAll("\u00a7.", "");
@@ -287,6 +310,44 @@ public final class MockGame {
         frames(mc);
         if (box.inputField.getText().isEmpty()) {
             self.chat.add("COPY_OK");
+        }
+        mc.currentScreen = null;
+
+        send(mc, self, "/sd bl add Baddie");
+        Files.write(new File(cmdDir, "0000000000002-000001.json").toPath(),
+                "{\"set\":{\"check.SP\":false}}".getBytes(StandardCharsets.UTF_8));
+        frames(mc);
+        WorldClient arena = new WorldClient();
+        lobby.playerEntities.remove(self);
+        self.worldObj = arena;
+        self.inventory.mainInventory[0] = new ItemStack(Items.SWORD);
+        arena.playerEntities.add(self);
+        mc.theWorld = arena;
+        EntityOtherPlayerMP baddie = other(arena, "Baddie", UUID.randomUUID(), 8, 0);
+        EntityOtherPlayerMP speeder2 = other(arena, "Speeder2", UUID.randomUUID(), -8, 0);
+        NetHandlerPlayClient net = new NetHandlerPlayClient();
+        net.players.add(new NetworkPlayerInfo(new GameProfile(self.getUniqueID(), "Aidan")));
+        NetworkPlayerInfo baddieInfo = new NetworkPlayerInfo(new GameProfile(baddie.getUniqueID(), "Baddie"));
+        baddieInfo.team = new ScorePlayerTeam("\u00a7c");
+        net.players.add(baddieInfo);
+        NetworkPlayerInfo speederInfo = new NetworkPlayerInfo(new GameProfile(speeder2.getUniqueID(), "Speeder2"));
+        speederInfo.team = new ScorePlayerTeam("\u00a79");
+        net.players.add(speederInfo);
+        mc.netHandler = net;
+        for (int t = 0; t < 120; t++) {
+            tick(arena);
+            speeder2.posX += 0.6;
+            frames(mc);
+        }
+        self.chat.add("HUD_ARENA " + hud(dataDir));
+        self.chat.add("TITLES " + mc.ingameGUI.titles);
+        send(mc, self, "/sd export");
+        send(mc, self, "/sd reload");
+        send(mc, self, "/sd checks");
+
+        long flushBy = System.currentTimeMillis() + 2600L;
+        while (System.currentTimeMillis() < flushBy) {
+            frames(mc);
         }
         System.out.println("Scheduled tasks run on client thread: " + mc.tasksRun);
         return new ArrayList<String>(self.chat);
@@ -303,6 +364,32 @@ public final class MockGame {
         for (Object o : world.playerEntities) {
             ((net.minecraft.entity.Entity) o).ticksExisted++;
         }
+    }
+
+    /** Same order as vanilla GuiChat: record history, send, close the screen. */
+    private static void send(Minecraft mc, EntityPlayerSP self, String text) throws InterruptedException {
+        GuiChat box = mc.openChat();
+        box.inputField.setText(text);
+        frames(mc);
+        mc.ingameGUI.getChatGUI().addToSentMessages(text);
+        self.sendChatMessage(text);
+        mc.currentScreen = null;
+        frames(mc);
+    }
+
+    private static void ticks(Minecraft mc, WorldClient world, int count) throws InterruptedException {
+        for (int i = 0; i < count; i++) {
+            tick(world);
+            frames(mc);
+        }
+    }
+
+    /** HUD writes go through a background writer, so give it a moment before reading. */
+    private static String hud(File dataDir) throws Exception {
+        Thread.sleep(300);
+        File file = new File(dataDir, "config/safedetect-hud.json");
+        return file.isFile() ? new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8)
+                .replace('\n', ' ') : "";
     }
 
     private static void frames(Minecraft mc) throws InterruptedException {

@@ -85,13 +85,63 @@ public final class Launch {
         ok &= expect(all, "Deleted ", false);
         ok &= expect(all, "COPY_OK", true);
 
+        ok &= expect(line(chat, "HUD_GAME "), "\"name\":\"Ghosty\"", true);
+        ok &= expect(line(chat, "HUD_LOBBY "), "Ghosty", false);
+        ok &= expect(line(chat, "HUD_LOBBY "), "\"players\": ", true);
+        ok &= count(all, "(page 1/", 2);
+        ok &= expect(all, "Keys updated: sniperUrl set", true);
+        ok &= expect(all, "SECRET123", false);
+
+        Thread.sleep(500);
         String json = new String(Files.readAllBytes(new File(dataDir, "config/safedetect-flags.json").toPath()),
                 StandardCharsets.UTF_8);
         ok &= expect(json, "\"Wemzy_on_top\"", true);
         ok &= expect(json, "\"9 stars, 3.0 FKDR\"", true);
         ok &= expect(json, "\"Blocker\"", true);
+        ok &= expect(json, "\"reach 3.", true);
+
+        String arena = line(chat, "HUD_ARENA ");
+        ok &= count(all, "DODGE? Baddie", 1);
+        ok &= expect(line(chat, "TITLES "), "Dodge?", true);
+        ok &= expect(arena, "\"name\":\"Baddie\"", true);
+        ok &= expect(arena, "\"team\":\"c\"", true);
+        ok &= expect(arena, "\"seen\":1", true);
+        ok &= expect(arena, "\"threat\":\"blacklisted\"", true);
+        ok &= expect(all, "Speeder2 failed", false);
+        ok &= expect(all, "Exported ", true);
+        ok &= expect(all, "Reloaded: ", true);
+        ok &= expect(all, "Reloaded: 0 saved", false);
+        ok &= expect(all, "Checks:", true);
+        String[] files = new File(dataDir, "config").list();
+        boolean flagsCsv = false;
+        boolean seenCsv = false;
+        for (String name : files == null ? new String[0] : files) {
+            flagsCsv |= name.startsWith("safedetect-export-") && name.endsWith(".csv");
+            seenCsv |= name.startsWith("safedetect-encounters-") && name.endsWith(".csv");
+        }
+        ok &= expect(flagsCsv && seenCsv ? "csv" : "", "csv", true);
         System.out.println(ok ? "ALL CHECKS PASSED" : "SOME CHECKS FAILED");
         System.exit(ok ? 0 : 1);
+    }
+
+    private static String line(List<String> chat, String prefix) {
+        for (String line : chat) {
+            if (line.startsWith(prefix)) {
+                return line;
+            }
+        }
+        System.out.println("FAIL  missing line " + prefix.trim());
+        return "";
+    }
+
+    private static boolean count(String haystack, String needle, int wanted) {
+        int found = 0;
+        for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+            found++;
+        }
+        boolean pass = found == wanted;
+        System.out.println((pass ? "PASS  " : "FAIL  ") + "has " + wanted + "x   " + needle + " (found " + found + ")");
+        return pass;
     }
 
     private static boolean expect(String haystack, String needle, boolean present) {

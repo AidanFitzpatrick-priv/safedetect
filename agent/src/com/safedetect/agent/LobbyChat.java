@@ -21,8 +21,12 @@ final class LobbyChat {
     private static final Pattern PARTY_MEMBERS = Pattern.compile("(?i)Party Members:\\s*(.+)");
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9_]{3,16}");
     private static final Pattern GAME_START = Pattern.compile("(?i)the game starts in 1 second");
-    private static final Pattern WIN = Pattern.compile("(?i)(you won|bed wars?.*victory|\\bvictory\\b)");
-    private static final Pattern LOSS = Pattern.compile("(?i)(you lost|game over|you have been eliminated)");
+    private static final Pattern WIN = Pattern.compile("(?i)^(?:victory!?|you won!?.*)$");
+    private static final Pattern LOSS = Pattern.compile("(?i)^(?:you lost!?.*|game over!?|you have been eliminated!?)$");
+    /** Player, party, guild, team and private messages: "[RANK] Name: text" with optional channel prefix. */
+    private static final Pattern PLAYER_CHAT = Pattern.compile(
+            "^(?:(?:Party|Guild|Officer|Co-op) > |From |To |\\[(?:SHOUT|TEAM|SPECTATOR)\\] )?"
+                    + "(?:\\[[^\\]]+\\] ?)*[A-Za-z0-9_]{1,16}(?: \\[[^\\]]+\\])?: ");
 
     final Set<String> fromChat = new LinkedHashSet<String>();
     final Set<String> party = new LinkedHashSet<String>();
@@ -78,6 +82,9 @@ final class LobbyChat {
             addPartyNames(members.group(1));
             return;
         }
+        if (PLAYER_CHAT.matcher(text).find()) {
+            return;
+        }
         if (GAME_START.matcher(text).find()) {
             autoWho = true;
             return;
@@ -88,6 +95,18 @@ final class LobbyChat {
         if (LOSS.matcher(text).find()) {
             lost = true;
         }
+    }
+
+    /** Lobby names and pending game events belong to one world; the party carries over. */
+    void reset() {
+        fromChat.clear();
+        autoWho = false;
+        won = false;
+        lost = false;
+    }
+
+    static boolean playerChat(String text) {
+        return text != null && PLAYER_CHAT.matcher(text).find();
     }
 
     boolean takeAutoWho() {

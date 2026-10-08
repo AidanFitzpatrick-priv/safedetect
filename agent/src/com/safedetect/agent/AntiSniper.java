@@ -89,27 +89,34 @@ final class AntiSniper {
         String player = name == null ? "" : name;
         String token = key == null ? "" : key;
         boolean placeholders = url.contains("{{");
-        try {
-            url = url.replace("{{id}}", dashed)
-                    .replace("{{uuid}}", dashed.replace("-", ""))
-                    .replace("{{name}}", URLEncoder.encode(player, "UTF-8"))
-                    .replace("{{key}}", URLEncoder.encode(token, "UTF-8"))
-                    .replace("{{sources}}", "GAME");
-        } catch (Exception ignored) {
-        }
+        String encodedName = encode(player);
+        url = url.replace("{{id}}", dashed)
+                .replace("{{uuid}}", dashed.replace("-", ""))
+                .replace("{{name}}", encodedName)
+                .replace("{{key}}", encode(token))
+                .replace("{{sources}}", "GAME");
         if (!placeholders) {
             String join = url.contains("?") ? "&" : "?";
-            url = url + join + "id=" + dashed + "&name=" + player;
+            url = url + join + "id=" + dashed + "&name=" + encodedName;
         }
         return url;
     }
 
-    void submit(String url, UUID id, String name) {
+    private static String encode(String value) {
+        try {
+            return URLEncoder.encode(value, "UTF-8");
+        } catch (Exception ignored) {
+            return value;
+        }
+    }
+
+    /** False when the queue is full, so the caller can retry later. */
+    boolean submit(String url, UUID id, String name) {
         if (url == null || url.isEmpty() || id == null || name == null) {
-            return;
+            return true;
         }
         start();
-        jobs.offer(new Job(url, id, name));
+        return jobs.offer(new Job(url, id, name));
     }
 
     Result poll() {

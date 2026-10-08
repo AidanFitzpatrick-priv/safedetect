@@ -55,20 +55,46 @@ final class Hypixel {
         }
     }
 
+    /** Thrown for HTTP 429; the job goes back on the queue. */
+    private static final class RateLimited extends Exception {
+        private static final long serialVersionUID = 1L;
+        final long waitMs;
+
+        RateLimited(long waitMs) {
+            this.waitMs = waitMs;
+        }
+    }
+
+    private static final UUID NO_ACCOUNT = new UUID(0L, 0L);
+    private static final long MIN_GAP_MS = 400L;
+    private static final int LOW_REMAINING = 5;
+
     private final LinkedBlockingQueue<Job> jobs = new LinkedBlockingQueue<Job>(64);
     private final ConcurrentLinkedQueue<Result> results = new ConcurrentLinkedQueue<Result>();
+    private final ConcurrentLinkedQueue<String> failed = new ConcurrentLinkedQueue<String>();
     private volatile boolean started;
+    private long pauseUntil;
 
-    void submit(String key, UUID id, String name) {
+    static String token(UUID id, String name) {
+        return (id != null ? id.toString() : name).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** False when the queue is full, so the caller can retry later. */
+    boolean submit(String key, UUID id, String name) {
         if (key == null || key.isEmpty() || name == null || name.isEmpty()) {
-            return;
+            return true;
         }
         start();
-        jobs.offer(new Job(key, id, name));
+        return jobs.offer(new Job(key, id, name));
     }
 
     Result poll() {
         return results.poll();
+    }
+
+    /** Tokens (see {@link #token}) whose lookup failed with a network or API error rather than an answer. */
+    String pollFailed() {
+        return failed.poll();
     }
 
     private synchronized void start() {
@@ -92,15 +118,29 @@ final class Hypixel {
     private void loop() {
         while (true) {
             try {
+                long wait = pauseUntil - System.currentTimeMillis();
+                if (wait > 0L) {
+                    Thread.sleep(Math.min(wait, 1000L));
+                    continue;
+                }
                 Job job = jobs.poll(1L, TimeUnit.SECONDS);
                 if (job == null) {
                     continue;
                 }
-                Result result = fetch(job);
-                if (result != null) {
-                    results.add(result);
+                try {
+                    Result result = fetch(job);
+                    if (result != null) {
+                        results.add(result);
+                    } else {
+                        failed.add(token(job.id, job.name));
+                    }
+                } catch (RateLimited limited) {
+                    pauseUntil = System.currentTimeMillis() + limited.waitMs;
+                    if (!jobs.offer(job)) {
+                        failed.add(token(job.id, job.name));
+                    }
                 }
-                Thread.sleep(400L);
+                Thread.sleep(MIN_GAP_MS);
             } catch (InterruptedException ignored) {
                 return;
             } catch (Throwable thrown) {
@@ -109,11 +149,15 @@ final class Hypixel {
         }
     }
 
+    /** Null means the lookup failed and may be retried; a nicked result means Mojang has no such account. */
     @SuppressWarnings("unchecked")
-    private Result fetch(Job job) {
+    private Result fetch(Job job) throws RateLimited {
         try {
             UUID uuid = job.id != null ? job.id : mojangUuid(job.name);
             if (uuid == null) {
+                return null;
+            }
+            if (NO_ACCOUNT.equals(uuid)) {
                 return new Result(null, job.name, true, 0.0, 0.0, 0, 0, 0, -1, 0L);
             }
             String url = "https://api.hypixel.net/v2/player?uuid=" + uuid.toString().replace("-", "");
@@ -123,6 +167,14 @@ final class Hypixel {
             conn.setRequestProperty("User-Agent", "SafeDetect");
             conn.setRequestProperty("API-Key", job.key);
             int code = conn.getResponseCode();
+            long resetMs = Math.max(1L, headerLong(conn, "RateLimit-Reset", 60L)) * 1000L;
+            if (code == 429) {
+                throw new RateLimited(resetMs);
+            }
+            long remaining = headerLong(conn, "RateLimit-Remaining", Long.MAX_VALUE);
+            if (remaining <= LOW_REMAINING) {
+                pauseUntil = System.currentTimeMillis() + resetMs;
+            }
             InputStream stream = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
             if (stream == null) {
                 return null;
@@ -190,12 +242,27 @@ final class Hypixel {
             double fkdr = kills / (double) Math.max(1, deaths);
             double wlr = wins / (double) Math.max(1, losses);
             return new Result(uuid, job.name, false, fkdr, wlr, stars, kills, wins, winstreak, lastLogin);
+        } catch (RateLimited limited) {
+            throw limited;
         } catch (Throwable thrown) {
             Log.once("hypixel fetch", thrown);
             return null;
         }
     }
 
+    private static long headerLong(HttpURLConnection conn, String name, long fallback) {
+        String value = conn.getHeaderField(name);
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Long.parseLong(value.trim());
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    /** {@link #NO_ACCOUNT} when Mojang has no such name, null when the lookup itself failed. */
     @SuppressWarnings("unchecked")
     private static UUID mojangUuid(String name) {
         try {
@@ -206,9 +273,12 @@ final class Hypixel {
             conn.setRequestProperty("User-Agent", "SafeDetect");
             int code = conn.getResponseCode();
             if (code == 204 || code == 404) {
+                return NO_ACCOUNT;
+            }
+            if (code >= 400) {
                 return null;
             }
-            InputStream stream = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+            InputStream stream = conn.getInputStream();
             if (stream == null) {
                 return null;
             }

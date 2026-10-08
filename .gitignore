@@ -13,5 +13,7 @@ safedetect-settings.json
 safedetect-flags.json
 safedetect-hud.json
 safedetect-hud-cmd.json
+safedetect-cmd/
+safedetect-overlay.json
 safedetect-blacklist.txt
 safedetect-skins.json

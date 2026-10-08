@@ -1,12 +1,10 @@
 package com.safedetect.agent;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -60,6 +58,8 @@ final class FlagStore {
         final Set<String> flags = new LinkedHashSet<String>();
         final Map<String, String> details = new LinkedHashMap<String, String>();
         final Map<String, Integer> counts = new LinkedHashMap<String, Integer>();
+        /** Flag name to what triggered it most recently, e.g. "reach 3.71 (3 long hits)". */
+        final Map<String, String> evidence = new LinkedHashMap<String, String>();
         int times;
         String lastCheck;
         long lastCheckAt;
@@ -67,32 +67,108 @@ final class FlagStore {
         long last;
     }
 
+    private static final long FLUSH_MS = 2000L;
+
     private final Map<String, Record> byUuid = new LinkedHashMap<String, Record>();
     private final Map<String, Record> byName = new LinkedHashMap<String, Record>();
     private final File file;
+    private List<Record> recordsView;
+    private List<Record> cheatersView;
+    private boolean dirty;
+    private long lastFlush;
 
     FlagStore(File gameDir) {
         file = new File(gameDir, "config/safedetect-flags.json");
         load();
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String text = pendingJson();
+                    if (text != null) {
+                        Files2.writeAtomic(file, text);
+                    }
+                }
+            }, "SafeDetect-Flags-Flush"));
+        } catch (Throwable ignored) {
+        }
     }
 
-    int size() {
+    synchronized int size() {
         return byUuid.size();
     }
 
-    List<Record> records() {
-        return new ArrayList<Record>(byUuid.values());
+    /** Read-only and cached until the store changes. */
+    synchronized List<Record> records() {
+        if (recordsView == null) {
+            recordsView = Collections.unmodifiableList(new ArrayList<Record>(byUuid.values()));
+        }
+        return recordsView;
     }
 
-    int clear() {
+    /** Records with at least one cheat flag; read-only and cached until the store changes. */
+    synchronized List<Record> cheaters() {
+        if (cheatersView == null) {
+            List<Record> out = new ArrayList<Record>();
+            for (Record record : byUuid.values()) {
+                if (hasCheat(record)) {
+                    out.add(record);
+                }
+            }
+            cheatersView = Collections.unmodifiableList(out);
+        }
+        return cheatersView;
+    }
+
+    synchronized int clear() {
         int n = byUuid.size();
         byUuid.clear();
         byName.clear();
-        save();
+        changed();
         return n;
     }
 
-    Record get(UUID uuid, String name) {
+    /** Writes on the background writer at most every two seconds unless forced. */
+    void flush(boolean force) {
+        long now = System.currentTimeMillis();
+        String text;
+        synchronized (this) {
+            if (!dirty || (!force && now - lastFlush < FLUSH_MS)) {
+                return;
+            }
+            lastFlush = now;
+            text = pendingJson();
+        }
+        if (text != null) {
+            Files2.writeLater(file, text);
+        }
+    }
+
+    private synchronized String pendingJson() {
+        if (!dirty) {
+            return null;
+        }
+        dirty = false;
+        return json();
+    }
+
+    private void changed() {
+        dirty = true;
+        recordsView = null;
+        cheatersView = null;
+    }
+
+    /** Re-reads the file, dropping unsaved changes; flush and drain first to keep them. */
+    synchronized void reload() {
+        byUuid.clear();
+        byName.clear();
+        load();
+        recordsView = null;
+        cheatersView = null;
+        dirty = false;
+    }
+
+    synchronized Record get(UUID uuid, String name) {
         Record record = uuid == null ? null : byUuid.get(uuid.toString());
         if (record == null && name != null) {
             record = byName.get(name.toLowerCase(Locale.ROOT));
@@ -165,8 +241,12 @@ final class FlagStore {
         return record.flags.contains(flag) ? 1 : 0;
     }
 
+    synchronized boolean add(UUID uuid, String name, Flag flag, String detail) {
+        return add(uuid, name, flag, detail, null);
+    }
+
     /** Returns true when the flag type is new for this player. Always increments the times counter. */
-    boolean add(UUID uuid, String name, Flag flag, String detail) {
+    synchronized boolean add(UUID uuid, String name, Flag flag, String detail, String evidence) {
         if (uuid == null || flag == null) {
             return false;
         }
@@ -177,9 +257,14 @@ final class FlagStore {
             record.uuid = uuid.toString();
             record.first = System.currentTimeMillis();
         }
-        record.name = name;
+        if (name != null) {
+            record.name = name;
+        }
         record.last = System.currentTimeMillis();
-        record.lastCheck = detail != null ? detail : flag.name();
+        if (evidence != null && !evidence.isEmpty()) {
+            record.evidence.put(flag.name(), evidence);
+        }
+        record.lastCheck = evidence != null && !evidence.isEmpty() ? evidence : detail != null ? detail : flag.name();
         record.lastCheckAt = record.last;
         boolean added = record.flags.add(flag.name());
         record.times++;
@@ -189,7 +274,7 @@ final class FlagStore {
             record.details.put(flag.name(), detail);
         }
         index(record);
-        save();
+        changed();
         return added;
     }
 
@@ -240,6 +325,13 @@ final class FlagStore {
                         }
                     }
                 }
+                if (map.get("evidence") instanceof Map) {
+                    for (Map.Entry<String, Object> item : ((Map<String, Object>) map.get("evidence")).entrySet()) {
+                        if (item.getValue() instanceof String) {
+                            record.evidence.put(item.getKey(), (String) item.getValue());
+                        }
+                    }
+                }
                 if (map.get("counts") instanceof Map) {
                     for (Map.Entry<String, Object> count : ((Map<String, Object>) map.get("counts")).entrySet()) {
                         if (count.getValue() instanceof Number) {
@@ -267,7 +359,7 @@ final class FlagStore {
         }
     }
 
-    private void save() {
+    private String json() {
         List<Record> records = new ArrayList<Record>(byUuid.values());
         StringBuilder out = new StringBuilder("{\n  \"players\": [");
         for (int i = 0; i < records.size(); i++) {
@@ -290,6 +382,15 @@ final class FlagStore {
                         .append(": ").append(Json.quote(detail.getValue()));
             }
             out.append(d == 0 ? "},\n" : "\n      },\n");
+            if (!record.evidence.isEmpty()) {
+                out.append("      \"evidence\": {");
+                int e = 0;
+                for (Map.Entry<String, String> item : record.evidence.entrySet()) {
+                    out.append(e++ == 0 ? "\n" : ",\n").append("        ").append(Json.quote(item.getKey()))
+                            .append(": ").append(Json.quote(item.getValue()));
+                }
+                out.append("\n      },\n");
+            }
             out.append("      \"counts\": {");
             int c = 0;
             for (Map.Entry<String, Integer> count : record.counts.entrySet()) {
@@ -306,14 +407,6 @@ final class FlagStore {
             out.append("      \"last\": ").append(record.last).append("\n    }");
         }
         out.append(records.isEmpty() ? "]\n}" : "\n  ]\n}");
-        File parent = file.getParentFile();
-        if (parent != null && !parent.isDirectory()) {
-            parent.mkdirs();
-        }
-        try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-            writer.write(out.toString());
-        } catch (Throwable thrown) {
-            Log.once("flag file write", thrown);
-        }
+        return out.toString();
     }
 }

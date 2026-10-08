@@ -1,22 +1,28 @@
 package com.safedetect.agent;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Overlay data that lives in the game JVM without loading AWT. The Swing window runs in a child process
  * so Lunar's javaw only owns the LWJGL window.
+ *
+ * The game writes {@code safedetect-hud.json}; the overlay drops one file per command into
+ * {@code safedetect-cmd/}. Each command file is renamed into place complete, and only the game deletes it.
  */
 final class Hud {
+    static final String[] KEY_NAMES = { "hypixel", "sniperKey", "sniperUrl", "urchin", "seraph", "aurora", "discord" };
+
     static final class Row {
         final String name;
         final String tags;
@@ -30,6 +36,14 @@ final class Hud {
         final int finals;
         final int wins;
         final int sniper;
+        /** Minecraft colour code char of the player's team, or empty. */
+        String team = "";
+        boolean blacklisted;
+        boolean friend;
+        int seen = -1;
+        long seenAt;
+        String threat = "";
+        String evidence = "";
 
         Row(String name, String tags, int times, String last, long lastAt) {
             this(name, tags, times, last, lastAt, -1, -1.0, -1.0, -1, -1, -1, -1);
@@ -52,18 +66,25 @@ final class Hud {
         }
     }
 
+    private static final long POLL_MS = 100L;
     private static final AtomicBoolean REFRESH = new AtomicBoolean();
     private static final AtomicBoolean CLEAR = new AtomicBoolean();
-    private static Boolean nextTab;
-    private static Boolean nextChat;
-    private static Boolean nextSound;
+    private static final AtomicInteger CMD_COUNTER = new AtomicInteger();
+    private static final ConcurrentLinkedQueue<String> REPORTS = new ConcurrentLinkedQueue<String>();
+    private static final ConcurrentLinkedQueue<Map<String, String>> KEYS = new ConcurrentLinkedQueue<Map<String, String>>();
+    private static final ConcurrentLinkedQueue<Map<String, Object>> SETS = new ConcurrentLinkedQueue<Map<String, Object>>();
+    private static final ConcurrentLinkedQueue<String[]> ACTIONS = new ConcurrentLinkedQueue<String[]>();
+    static final String[] ROW_ACTIONS = { "unblacklist", "friend", "unfriend" };
     private static File dir;
+    private static Settings settings;
     private static Process child;
     private static long lastSpawn;
-    private static boolean reopen;
-    private static boolean forceRefresh;
+    private static long lastPoll;
+    private static long reopenSeq;
+    private static long refreshSeq;
     private static boolean hooked;
     private static String sessionText = "";
+    private static String lastWritten;
     private static int lastPlayers;
     private static List<Row> lastLobby = new ArrayList<Row>();
     private static List<Row> lastSaved = new ArrayList<Row>();
@@ -75,7 +96,8 @@ final class Hud {
         dir = gameDir;
     }
 
-    static void bind(Settings ignored) {
+    static void bind(Settings next) {
+        settings = next;
     }
 
     static void session(int games, int wins) {
@@ -83,53 +105,39 @@ final class Hud {
     }
 
     static void reopen() {
-        reopen = true;
+        reopenSeq++;
         writeState(lastPlayers, lastLobby, lastSaved);
         spawn(true);
     }
 
     static void bump() {
-        forceRefresh = true;
+        refreshSeq++;
     }
 
     static boolean takeRefresh() {
-        pullCommands();
         return REFRESH.getAndSet(false);
     }
 
     static String takeReport() {
-        pullCommands();
-        return reports.poll();
+        return REPORTS.poll();
+    }
+
+    static Map<String, String> takeKeys() {
+        return KEYS.poll();
+    }
+
+    static Map<String, Object> takeSet() {
+        return SETS.poll();
+    }
+
+    /** {action, name} where action is one of {@link #ROW_ACTIONS}. */
+    static String[] takeAction() {
+        return ACTIONS.poll();
     }
 
     static boolean takeClear() {
-        pullCommands();
         return CLEAR.getAndSet(false);
     }
-
-    static Boolean takeTabMarks() {
-        pullCommands();
-        Boolean value = nextTab;
-        nextTab = null;
-        return value;
-    }
-
-    static Boolean takeAlertsChat() {
-        pullCommands();
-        Boolean value = nextChat;
-        nextChat = null;
-        return value;
-    }
-
-    static Boolean takeAlertSound() {
-        pullCommands();
-        Boolean value = nextSound;
-        nextSound = null;
-        return value;
-    }
-
-    private static final java.util.concurrent.ConcurrentLinkedQueue<String> reports =
-            new java.util.concurrent.ConcurrentLinkedQueue<String>();
 
     static String wdr(String name) {
         return "/wdr " + name + " cheating";
@@ -149,7 +157,7 @@ final class Hud {
     }
 
     static void show(int players, List<Row> lobby, List<Row> saved) {
-        if (Boolean.getBoolean("safedetect.nogui") || Boolean.getBoolean("safedetect.overlay")) {
+        if (Boolean.getBoolean("safedetect.overlay")) {
             return;
         }
         writeState(players, lobby, saved);
@@ -176,8 +184,8 @@ final class Hud {
         return dir == null ? null : new File(dir, "config/safedetect-hud.json");
     }
 
-    static File cmdFile() {
-        return dir == null ? null : new File(dir, "config/safedetect-hud-cmd.json");
+    static File cmdDir() {
+        return dir == null ? null : new File(dir, "config/safedetect-cmd");
     }
 
     private static void spawn(boolean force) {
@@ -238,37 +246,33 @@ final class Hud {
         if (file == null) {
             return;
         }
-        File parent = file.getParentFile();
-        if (parent != null && !parent.isDirectory()) {
-            parent.mkdirs();
-        }
         lastPlayers = players;
         lastLobby = lobby != null ? new ArrayList<Row>(lobby) : new ArrayList<Row>();
         lastSaved = saved != null ? new ArrayList<Row>(saved) : new ArrayList<Row>();
         StringBuilder out = new StringBuilder("{\n");
         out.append("  \"players\": ").append(players).append(",\n");
         out.append("  \"session\": ").append(Json.quote(sessionText)).append(",\n");
-        out.append("  \"reopen\": ").append(reopen).append(",\n");
-        out.append("  \"refresh\": ").append(forceRefresh).append(",\n");
+        out.append("  \"reopen\": ").append(reopenSeq).append(",\n");
+        out.append("  \"refresh\": ").append(refreshSeq).append(",\n");
+        Settings s = settings;
+        out.append("  \"options\": ").append(s == null ? "{}" : s.optionsJson()).append(",\n");
+        out.append("  \"keys\": {");
+        for (int i = 0; i < KEY_NAMES.length; i++) {
+            out.append(i == 0 ? "" : ",").append(Json.quote(KEY_NAMES[i])).append(':')
+                    .append(s != null && s.hasKeyNamed(KEY_NAMES[i]));
+        }
+        out.append("},\n");
         out.append("  \"lobby\": ");
         writeRows(out, lobby);
         out.append(",\n  \"saved\": ");
         writeRows(out, saved);
         out.append("\n}\n");
-        reopen = false;
-        forceRefresh = false;
-        File tmp = new File(file.getPath() + ".tmp");
-        try (Writer writer = new OutputStreamWriter(new FileOutputStream(tmp), StandardCharsets.UTF_8)) {
-            writer.write(out.toString());
-        } catch (Throwable thrown) {
-            Log.once("hud write", thrown);
+        String text = out.toString();
+        if (text.equals(lastWritten)) {
             return;
         }
-        try {
-            Files.move(tmp.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        } catch (Throwable thrown) {
-            Log.once("hud move", thrown);
-        }
+        lastWritten = text;
+        Files2.writeLater(file, text);
     }
 
     private static void writeRows(StringBuilder out, List<Row> rows) {
@@ -290,48 +294,97 @@ final class Hud {
                 out.append(",\"winstreak\":").append(row.winstreak);
                 out.append(",\"finals\":").append(row.finals);
                 out.append(",\"wins\":").append(row.wins);
-                out.append(",\"sniper\":").append(row.sniper).append('}');
+                out.append(",\"sniper\":").append(row.sniper);
+                out.append(",\"team\":").append(Json.quote(row.team == null ? "" : row.team));
+                out.append(",\"bl\":").append(row.blacklisted);
+                out.append(",\"friend\":").append(row.friend);
+                out.append(",\"seen\":").append(row.seen);
+                out.append(",\"seenAt\":").append(row.seenAt);
+                out.append(",\"threat\":").append(Json.quote(row.threat == null ? "" : row.threat));
+                out.append(",\"evidence\":").append(Json.quote(row.evidence == null ? "" : row.evidence)).append('}');
             }
         }
         out.append(rows != null && !rows.isEmpty() ? "\n  ]" : "]");
     }
 
-    @SuppressWarnings("unchecked")
-    private static void pullCommands() {
-        File file = cmdFile();
-        if (file == null || !file.isFile()) {
+    /** Reads and deletes pending overlay commands, oldest first. Throttled; call once per frame. */
+    static void pollCommands() {
+        long now = System.currentTimeMillis();
+        if (now - lastPoll < POLL_MS) {
             return;
         }
-        try {
-            Object root = Json.parse(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
-            file.delete();
-            if (!(root instanceof Map)) {
-                return;
+        lastPoll = now;
+        File folder = cmdDir();
+        if (folder == null || !folder.isDirectory()) {
+            return;
+        }
+        File[] files = folder.listFiles();
+        if (files == null || files.length == 0) {
+            return;
+        }
+        Arrays.sort(files);
+        for (File file : files) {
+            if (!file.getName().endsWith(".json")) {
+                continue;
             }
-            Map<String, Object> map = (Map<String, Object>) root;
-            if (Boolean.TRUE.equals(map.get("refresh"))) {
-                REFRESH.set(true);
+            try {
+                String text = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+                file.delete();
+                apply(Json.parse(text));
+            } catch (Throwable thrown) {
+                file.delete();
+                Log.once("hud cmd", thrown);
             }
-            if (Boolean.TRUE.equals(map.get("clear"))) {
-                CLEAR.set(true);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void apply(Object root) {
+        if (!(root instanceof Map)) {
+            return;
+        }
+        Map<String, Object> map = (Map<String, Object>) root;
+        if (Boolean.TRUE.equals(map.get("refresh"))) {
+            REFRESH.set(true);
+        }
+        if (Boolean.TRUE.equals(map.get("clear"))) {
+            CLEAR.set(true);
+        }
+        String[][] legacy = { { "tab", "tabMarks" }, { "chat", "alertsChat" }, { "sound", "alertSound" } };
+        for (String[] pair : legacy) {
+            if (map.get(pair[0]) instanceof Boolean) {
+                Map<String, Object> one = new LinkedHashMap<String, Object>();
+                one.put(pair[1], map.get(pair[0]));
+                SETS.offer(one);
             }
-            if (map.get("tab") instanceof Boolean) {
-                nextTab = (Boolean) map.get("tab");
+        }
+        if (map.get("report") instanceof String) {
+            String name = ((String) map.get("report")).trim();
+            if (!name.isEmpty()) {
+                REPORTS.offer(name);
             }
-            if (map.get("chat") instanceof Boolean) {
-                nextChat = (Boolean) map.get("chat");
-            }
-            if (map.get("sound") instanceof Boolean) {
-                nextSound = (Boolean) map.get("sound");
-            }
-            if (map.get("report") instanceof String) {
-                String name = ((String) map.get("report")).trim();
-                if (!name.isEmpty()) {
-                    reports.offer(name);
+        }
+        if (map.get("keys") instanceof Map) {
+            Map<String, String> keys = new LinkedHashMap<String, String>();
+            for (Map.Entry<String, Object> entry : ((Map<String, Object>) map.get("keys")).entrySet()) {
+                if (entry.getValue() instanceof String) {
+                    keys.put(entry.getKey(), (String) entry.getValue());
                 }
             }
-        } catch (Throwable thrown) {
-            Log.once("hud cmd", thrown);
+            if (!keys.isEmpty()) {
+                KEYS.offer(keys);
+            }
+        }
+        if (map.get("set") instanceof Map) {
+            Map<String, Object> values = (Map<String, Object>) map.get("set");
+            if (!values.isEmpty()) {
+                SETS.offer(new LinkedHashMap<String, Object>(values));
+            }
+        }
+        for (String action : ROW_ACTIONS) {
+            if (map.get(action) instanceof String && !((String) map.get(action)).trim().isEmpty()) {
+                ACTIONS.offer(new String[] { action, ((String) map.get(action)).trim() });
+            }
         }
     }
 
@@ -350,8 +403,16 @@ final class Hud {
             Snapshot snap = new Snapshot();
             snap.players = map.get("players") instanceof Number ? ((Number) map.get("players")).intValue() : 0;
             snap.session = map.get("session") instanceof String ? (String) map.get("session") : "";
-            snap.reopen = Boolean.TRUE.equals(map.get("reopen"));
-            snap.refresh = Boolean.TRUE.equals(map.get("refresh"));
+            snap.reopen = lng(map, "reopen");
+            snap.refresh = lng(map, "refresh");
+            if (map.get("options") instanceof Map) {
+                snap.options.putAll((Map<String, Object>) map.get("options"));
+            }
+            if (map.get("keys") instanceof Map) {
+                for (Map.Entry<String, Object> entry : ((Map<String, Object>) map.get("keys")).entrySet()) {
+                    snap.keysSet.put(entry.getKey(), Boolean.TRUE.equals(entry.getValue()));
+                }
+            }
             snap.lobby = readRows(map.get("lobby"));
             snap.saved = readRows(map.get("saved"));
             return snap;
@@ -371,9 +432,17 @@ final class Hud {
                 continue;
             }
             Map<String, Object> map = (Map<String, Object>) entry;
-            rows.add(new Row(str(map, "name"), str(map, "tags"), num(map, "times"), str(map, "last"),
+            Row row = new Row(str(map, "name"), str(map, "tags"), num(map, "times"), str(map, "last"),
                     lng(map, "lastAt"), num(map, "stars"), dbl(map, "fkdr"), dbl(map, "wlr"), num(map, "winstreak"),
-                    num(map, "finals"), num(map, "wins"), num(map, "sniper")));
+                    num(map, "finals"), num(map, "wins"), num(map, "sniper"));
+            row.team = str(map, "team");
+            row.blacklisted = Boolean.TRUE.equals(map.get("bl"));
+            row.friend = Boolean.TRUE.equals(map.get("friend"));
+            row.seen = num(map, "seen");
+            row.seenAt = lng(map, "seenAt");
+            row.threat = str(map, "threat");
+            row.evidence = str(map, "evidence");
+            rows.add(row);
         }
         return rows;
     }
@@ -399,81 +468,60 @@ final class Hud {
     }
 
     static void writeCommand(boolean refresh, String report) {
-        writeCmd(refresh, false, report, null, null, null);
+        StringBuilder out = new StringBuilder("{\"refresh\":").append(refresh);
+        if (report != null && !report.isEmpty()) {
+            out.append(",\"report\":").append(Json.quote(report));
+        }
+        writeCmd(out.append('}').toString());
     }
 
     static void writeClear() {
-        writeCmd(false, true, null, null, null, null);
+        writeCmd("{\"clear\":true}");
     }
 
-    static void writePref(String name, boolean on) {
-        Boolean tab = "tab".equals(name) ? Boolean.valueOf(on) : null;
-        Boolean chat = "chat".equals(name) ? Boolean.valueOf(on) : null;
-        Boolean sound = "sound".equals(name) ? Boolean.valueOf(on) : null;
-        writeCmd(false, false, null, tab, chat, sound);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static void writeCmd(boolean refresh, boolean clear, String report, Boolean tab, Boolean chat,
-            Boolean sound) {
-        File file = cmdFile();
-        if (file == null) {
+    /** Values are sent as typed; an empty string clears that key. */
+    static void writeKeys(Map<String, String> keys) {
+        if (keys == null || keys.isEmpty()) {
             return;
         }
-        File parent = file.getParentFile();
-        if (parent != null && !parent.isDirectory()) {
-            parent.mkdirs();
+        StringBuilder out = new StringBuilder("{\"keys\":{");
+        int i = 0;
+        for (Map.Entry<String, String> entry : keys.entrySet()) {
+            out.append(i++ == 0 ? "" : ",").append(Json.quote(entry.getKey())).append(':')
+                    .append(Json.quote(entry.getValue() == null ? "" : entry.getValue()));
         }
-        if (file.isFile()) {
-            try {
-                Object root = Json.parse(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
-                if (root instanceof Map) {
-                    Map<String, Object> map = (Map<String, Object>) root;
-                    refresh = refresh || Boolean.TRUE.equals(map.get("refresh"));
-                    clear = clear || Boolean.TRUE.equals(map.get("clear"));
-                    if (report == null && map.get("report") instanceof String) {
-                        report = (String) map.get("report");
-                    }
-                    if (tab == null && map.get("tab") instanceof Boolean) {
-                        tab = (Boolean) map.get("tab");
-                    }
-                    if (chat == null && map.get("chat") instanceof Boolean) {
-                        chat = (Boolean) map.get("chat");
-                    }
-                    if (sound == null && map.get("sound") instanceof Boolean) {
-                        sound = (Boolean) map.get("sound");
-                    }
-                }
-            } catch (Throwable ignored) {
-            }
+        writeCmd(out.append("}}").toString());
+    }
+
+    /** value must be a Boolean, Number or String. */
+    static void writeSet(String name, Object value) {
+        String json = value instanceof String ? Json.quote((String) value) : String.valueOf(value);
+        writeCmd("{\"set\":{" + Json.quote(name) + ":" + json + "}}");
+    }
+
+    static void writeAction(String action, String name) {
+        if (name != null && !name.isEmpty() && Arrays.asList(ROW_ACTIONS).contains(action)) {
+            writeCmd("{" + Json.quote(action) + ":" + Json.quote(name) + "}");
         }
-        StringBuilder out = new StringBuilder("{\n  \"refresh\": ").append(refresh);
-        out.append(",\n  \"clear\": ").append(clear);
-        if (report != null && !report.isEmpty()) {
-            out.append(",\n  \"report\": ").append(Json.quote(report));
+    }
+
+    private static void writeCmd(String json) {
+        File folder = cmdDir();
+        if (folder == null) {
+            return;
         }
-        if (tab != null) {
-            out.append(",\n  \"tab\": ").append(tab);
-        }
-        if (chat != null) {
-            out.append(",\n  \"chat\": ").append(chat);
-        }
-        if (sound != null) {
-            out.append(",\n  \"sound\": ").append(sound);
-        }
-        out.append("\n}\n");
-        try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-            writer.write(out.toString());
-        } catch (Throwable thrown) {
-            Log.once("hud cmd write", thrown);
-        }
+        String name = String.format("%013d-%06d.json", Long.valueOf(System.currentTimeMillis()),
+                Integer.valueOf(CMD_COUNTER.incrementAndGet() % 1000000));
+        Files2.writeAtomic(new File(folder, name), json);
     }
 
     static final class Snapshot {
         int players;
         String session = "";
-        boolean reopen;
-        boolean refresh;
+        long reopen;
+        long refresh;
+        final Map<String, Object> options = new LinkedHashMap<String, Object>();
+        final Map<String, Boolean> keysSet = new LinkedHashMap<String, Boolean>();
         List<Row> lobby = new ArrayList<Row>();
         List<Row> saved = new ArrayList<Row>();
     }

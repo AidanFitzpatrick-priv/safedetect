@@ -9,6 +9,7 @@ import java.util.UUID;
 
 public class EntityPlayerSP extends EntityPlayer {
     public final List<String> chat = new ArrayList<String>();
+    public final List<String> sentToServer = new ArrayList<String>();
 
     public EntityPlayerSP(String name) {
         super(name, UUID.randomUUID());
@@ -22,9 +23,11 @@ public class EntityPlayerSP extends EntityPlayer {
         if (component.getChatStyle() != null && component.getChatStyle().click != null) {
             System.out.println("CLICK: " + component.getChatStyle().click.getValue());
         }
+        net.minecraft.client.Minecraft.getMinecraft().ingameGUI.getChatGUI().printChatMessage(component);
     }
 
+    /** Like vanilla, this only sends to the server; GuiChat is what records the sent history. */
     public void sendChatMessage(String message) {
-        net.minecraft.client.Minecraft.getMinecraft().ingameGUI.getChatGUI().sentMessages.add(message);
+        sentToServer.add(message);
     }
 }

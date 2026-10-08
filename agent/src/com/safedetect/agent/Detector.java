@@ -5,6 +5,7 @@ import java.lang.ref.WeakReference;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -29,9 +30,16 @@ final class Detector {
     private static final double SWEAT_FKDR = 4.0;
     private static final int SWEAT_FINALS = 50;
 
+    private static final int CHAT_MEMORY = 8;
+    private static final int LOOKUP_RETRIES = 3;
+
     private static final class Tracked {
         final Checks combat = new Checks();
         final MoveChecks movement = new MoveChecks();
+        int prevHurt;
+        boolean prevSwing;
+        /** Tick the checks last ran; melee only judges players whose checks ran this tick. */
+        long checkedTick = Long.MIN_VALUE;
     }
 
     private final Game game;
@@ -41,11 +49,15 @@ final class Detector {
     private final PlayerView view = new PlayerView();
     private final List<PlayerView> nearby = new ArrayList<PlayerView>();
     private final Map<UUID, Object> nearbyEntities = new HashMap<UUID, Object>();
-    private final Map<UUID, Integer> prevHurt = new HashMap<UUID, Integer>();
-    private final Map<UUID, Boolean> prevSwing = new HashMap<UUID, Boolean>();
+    private final Map<String, Integer> lookupFailures = new HashMap<String, Integer>();
+    private Object[] seenChat;
+    private boolean chatPrimed;
+    private String lastBox;
+    private int lastSentSize;
     private final Set<String> copyTargets = new LinkedHashSet<String>();
     private final Map<UUID, Object> tabOriginal = new HashMap<UUID, Object>();
     private final Map<UUID, Object> tabApplied = new HashMap<UUID, Object>();
+    private final Map<UUID, String> tabLabels = new HashMap<UUID, String>();
     private WeakReference<Object> lastWorld = new WeakReference<Object>(null);
     private int lastSelfTicks = Integer.MIN_VALUE;
     private long tick;
@@ -66,10 +78,17 @@ final class Detector {
     private final Set<UUID> tagLooked = new HashSet<UUID>();
     private final Set<UUID> tagAnnounced = new HashSet<UUID>();
     private final Set<UUID> auroraLooked = new HashSet<UUID>();
+    /** Lower-case names already warned about in this world. */
+    private final Set<String> dodgeWarned = new HashSet<String>();
+    /** Lower-case names flagged in this world; the flag alert already covered them, so no dodge warning. */
+    private final Set<String> flaggedHere = new HashSet<String>();
     private Settings settings;
     private Blacklist blacklist;
     private Denick denick;
-    private int receivedAt;
+    private Encounters encounters;
+    private File root;
+    private final Updater updater = new Updater();
+    private long worldSeq;
     private int sessionGames;
     private int sessionWins;
     private long lastWhoAt = Long.MIN_VALUE / 2;
@@ -110,11 +129,13 @@ final class Detector {
         inWorld = true;
         if (store == null) {
             File dir = game.dataDir(mc);
-            File root = dir != null ? dir : new File(".");
+            root = dir != null ? dir : new File(".");
             store = new FlagStore(root);
             settings = new Settings(root);
             blacklist = new Blacklist(root);
             denick = new Denick(root);
+            encounters = new Encounters(root);
+            CheckConfig.use(CheckConfig.from(settings));
             FlagLog.open(root);
             Hud.open(root);
             Hud.bind(settings);
@@ -123,6 +144,10 @@ final class Detector {
             }
             Log.info("Flag file loaded: " + store.size() + " saved players.");
         }
+        Hud.pollCommands();
+        applyKeys(self);
+        store.flush(false);
+        encounters.flush(false);
         commands(mc, self);
         copyIfClicked(mc);
         boolean overlayCmd = overlayHud(self);
@@ -138,8 +163,6 @@ final class Detector {
             lastWorld = new WeakReference<Object>(world);
             checks.clear();
             announced.clear();
-            prevHurt.clear();
-            prevSwing.clear();
             nearby.clear();
             nearbyEntities.clear();
             lookedUp.clear();
@@ -149,7 +172,11 @@ final class Detector {
             tagLooked.clear();
             tagAnnounced.clear();
             auroraLooked.clear();
-            receivedAt = 0;
+            lookupFailures.clear();
+            lobbyChat.reset();
+            dodgeWarned.clear();
+            flaggedHere.clear();
+            worldSeq++;
         }
         tick += elapsed;
         if (!greeted) {
@@ -159,6 +186,18 @@ final class Detector {
             if (settings != null && !settings.hasKey()) {
                 chat(self, "\u00a77Stats are off. \u00a78/sd key <hypixel-api-key> \u00a77from developer.hypixel.net");
             }
+            long now = System.currentTimeMillis();
+            String version = Updater.currentVersion();
+            if (settings != null && settings.updateCheck && version != null
+                    && Updater.due(settings.lastUpdateCheck, now)) {
+                settings.setLastUpdateCheck(now);
+                updater.start(version);
+            }
+        }
+        String newer = updater.take();
+        if (newer != null) {
+            chat(self, "\u00a77SafeDetect \u00a7f" + newer + "\u00a77 is out \u00a78(you have " + Updater.currentVersion()
+                    + "). Click to copy the download link.", Updater.RELEASES);
         }
 
         int selfColor = 0;
@@ -190,7 +229,8 @@ final class Detector {
             return;
         }
         UUID selfId = game.uuid(self);
-        Set<UUID> tabIds = tabPlayerIds(mc, selfId);
+        Object[] tabs = tabEntries(mc);
+        Set<UUID> tabIds = tabPlayerIds(tabs, selfId);
         try {
             if (selfId != null) {
                 present.add(selfId);
@@ -216,21 +256,21 @@ final class Detector {
             }
             Tracked data = checks.get(snap.uuid);
             Object entity = nearbyEntities.get(snap.uuid);
-            if (data == null || entity == null) {
+            if (data == null || entity == null || data.checkedTick != tick) {
                 continue;
             }
             try {
                 data.combat.melee(snap, snaps);
                 if (data.combat.failedKillaura()) {
-                    mark(self, snap.uuid, entity, FlagStore.Flag.KA, "Killaura");
+                    mark(self, snap.uuid, entity, FlagStore.Flag.KA, data.combat.evidence(FlagStore.Flag.KA));
                     data.combat.resetKillaura();
                 }
                 if (data.combat.failedSilentAura()) {
-                    mark(self, snap.uuid, entity, FlagStore.Flag.SI, "Silent Aura");
+                    mark(self, snap.uuid, entity, FlagStore.Flag.SI, data.combat.evidence(FlagStore.Flag.SI));
                     data.combat.resetSilentAura();
                 }
                 if (data.combat.failedReach()) {
-                    mark(self, snap.uuid, entity, FlagStore.Flag.RE, "Reach");
+                    mark(self, snap.uuid, entity, FlagStore.Flag.RE, data.combat.evidence(FlagStore.Flag.RE));
                     data.combat.resetReach();
                 }
             } catch (Throwable thrown) {
@@ -241,18 +281,6 @@ final class Detector {
         applySniper();
         applyTags(self);
         applyDenick(self);
-        Iterator<UUID> hurtGone = prevHurt.keySet().iterator();
-        while (hurtGone.hasNext()) {
-            if (!present.contains(hurtGone.next())) {
-                hurtGone.remove();
-            }
-        }
-        Iterator<UUID> swingGone = prevSwing.keySet().iterator();
-        while (swingGone.hasNext()) {
-            if (!present.contains(swingGone.next())) {
-                swingGone.remove();
-            }
-        }
         Iterator<UUID> it = checks.keySet().iterator();
         while (it.hasNext()) {
             UUID id = it.next();
@@ -261,8 +289,29 @@ final class Detector {
                 announced.remove(id);
             }
         }
-        tab(mc);
-        lobbyWindow(mc, selfId);
+        tab(tabs);
+        lobbyWindow(self, tabs, selfId);
+    }
+
+    private Object[] tabEntries(Object mc) {
+        if (!game.canUseTab()) {
+            return new Object[0];
+        }
+        try {
+            return game.tabEntries(mc);
+        } catch (Throwable thrown) {
+            Log.once("tab entries", thrown);
+            return new Object[0];
+        }
+    }
+
+    private Tracked tracked(UUID id) {
+        Tracked data = checks.get(id);
+        if (data == null) {
+            data = new Tracked();
+            checks.put(id, data);
+        }
+        return data;
     }
 
     private void track(Object self, Object world, Object player, int selfColor, double selfX, double selfZ,
@@ -324,61 +373,58 @@ final class Detector {
         view.invisible = snap.invisible;
         view.uuid = snap.uuid;
 
-        Tracked data = checks.get(id);
-        if (data == null) {
-            data = new Tracked();
-            checks.put(id, data);
-        }
+        Tracked data = tracked(id);
+        data.checkedTick = tick;
         Checks combat = data.combat;
         MoveChecks movement = data.movement;
         combat.update(view, tick, elapsed);
         movement.update(view, tick, elapsed, inGame, movementData);
         if (combat.failedAutoBlock()) {
-            mark(self, id, player, FlagStore.Flag.AB, "AutoBlock");
+            mark(self, id, player, FlagStore.Flag.AB, combat.evidence(FlagStore.Flag.AB));
             combat.resetAutoBlock();
         }
         if (combat.failedNoSlow()) {
-            mark(self, id, player, FlagStore.Flag.NS, "NoSlow");
+            mark(self, id, player, FlagStore.Flag.NS, combat.evidence(FlagStore.Flag.NS));
             combat.resetNoSlow();
         }
         if (combat.failedLegitScaffold()) {
-            mark(self, id, player, FlagStore.Flag.LS, "Legit Scaffold");
+            mark(self, id, player, FlagStore.Flag.LS, combat.evidence(FlagStore.Flag.LS));
             combat.resetLegitScaffold();
         }
         if (combat.failedAutoclicker()) {
-            mark(self, id, player, FlagStore.Flag.AC, "Autoclicker");
+            mark(self, id, player, FlagStore.Flag.AC, combat.evidence(FlagStore.Flag.AC));
             combat.resetAutoclicker();
         }
         if (movement.failedSprintScaffold()) {
-            mark(self, id, player, FlagStore.Flag.SS, "Sprint Scaffold");
+            mark(self, id, player, FlagStore.Flag.SS, movement.evidence(FlagStore.Flag.SS));
             movement.resetSprintScaffold();
         }
         if (movement.failedTower()) {
-            mark(self, id, player, FlagStore.Flag.TW, "Tower");
+            mark(self, id, player, FlagStore.Flag.TW, movement.evidence(FlagStore.Flag.TW));
             movement.resetTower();
         }
         if (movement.failedSpeed()) {
-            mark(self, id, player, FlagStore.Flag.SP, "Speed");
+            mark(self, id, player, FlagStore.Flag.SP, movement.evidence(FlagStore.Flag.SP));
             movement.resetSpeed();
         }
         if (movement.failedSnapAim()) {
-            mark(self, id, player, FlagStore.Flag.SA, "Snap Aim");
+            mark(self, id, player, FlagStore.Flag.SA, movement.evidence(FlagStore.Flag.SA));
             movement.resetSnapAim();
         }
         if (movement.failedVelocity()) {
-            mark(self, id, player, FlagStore.Flag.VL, "Velocity");
+            mark(self, id, player, FlagStore.Flag.VL, movement.evidence(FlagStore.Flag.VL));
             movement.resetVelocity();
         }
         if (movement.failedGodBridge()) {
-            mark(self, id, player, FlagStore.Flag.GB, "God Bridge");
+            mark(self, id, player, FlagStore.Flag.GB, movement.evidence(FlagStore.Flag.GB));
             movement.resetGodBridge();
         }
         if (movement.failedDiagonal()) {
-            mark(self, id, player, FlagStore.Flag.DS, "Diagonal Scaffold");
+            mark(self, id, player, FlagStore.Flag.DS, movement.evidence(FlagStore.Flag.DS));
             movement.resetDiagonal();
         }
         if (movement.failedTelly()) {
-            mark(self, id, player, FlagStore.Flag.TL, "Telly");
+            mark(self, id, player, FlagStore.Flag.TL, movement.evidence(FlagStore.Flag.TL));
             movement.resetTelly();
         }
     }
@@ -398,17 +444,16 @@ final class Detector {
         snap.usingItem = game.usingItem(player);
         snap.swinging = game.swinging(player);
         snap.swingProgressInt = game.swingProgressInt(player);
-        Boolean wasSwing = prevSwing.get(id);
-        snap.swingStart = snap.swingProgressInt == 1 || (snap.swinging && !Boolean.TRUE.equals(wasSwing));
-        prevSwing.put(id, snap.swinging);
+        Tracked data = tracked(id);
+        snap.swingStart = snap.swingProgressInt == 1 || (snap.swinging && !data.prevSwing);
+        data.prevSwing = snap.swinging;
         snap.riding = game.riding(player);
         snap.held = game.held(player);
         snap.speedAmplifier = game.speedAmplifier(player);
         snap.jumpAmplifier = snap.held == Game.HELD_BLOCK ? game.jumpAmplifier(player) : -1;
         snap.hurtTime = game.hurtTime(player);
-        Integer previous = prevHurt.get(id);
-        snap.prevHurtTime = previous == null ? 0 : previous.intValue();
-        prevHurt.put(id, snap.hurtTime);
+        snap.prevHurtTime = data.prevHurt;
+        data.prevHurt = snap.hurtTime;
         snap.climbingOrSwimming = movementData && game.climbingOrSwimming(player);
         snap.invisible = game.invisible(player);
         nearby.add(snap);
@@ -416,13 +461,23 @@ final class Detector {
         return snap;
     }
 
-    private void mark(Object self, UUID id, Object player, FlagStore.Flag flag, String check) throws Exception {
+    /** Disabled checks are skipped here; callers still reset them so their state does not build up. */
+    private void mark(Object self, UUID id, Object player, FlagStore.Flag flag, String evidence) throws Exception {
+        if (!CheckConfig.current().enabled(flag)) {
+            return;
+        }
+        String check = CheckConfig.label(flag);
         String name = player == null ? null : game.name(player);
-        if (store.add(id, name, flag, check)) {
-            String wdr = name != null ? Hud.wdr(name) : PREFIX + name + " failed " + check;
-            alert(self, name + " \u00a77failed \u00a7c" + check, wdr);
-            FlagLog.line(name, check);
-            Log.info(name + " failed " + check);
+        if (store.add(id, name, flag, check, evidence)) {
+            String who = name != null ? name : id.toString();
+            flaggedHere.add(who.toLowerCase(Locale.ROOT));
+            String why = evidence == null || evidence.isEmpty() ? "" : " (" + evidence + ")";
+            if (name != null) {
+                alert(self, name + " \u00a77failed \u00a7c" + check + (why.isEmpty() ? "" : " \u00a78" + why.trim()),
+                        Hud.wdr(name));
+            }
+            FlagLog.line(who, check + why);
+            Log.info(who + " failed " + check + why);
         }
     }
 
@@ -476,23 +531,78 @@ final class Detector {
         }
     }
 
+    /**
+     * Vanilla skips adding a message to the sent history when it repeats the previous one. A repeat shows
+     * up as the chat screen closing on that same text while the history did not grow.
+     */
     private void commands(Object mc, Object self) {
         try {
             List<?> sent = game.sentChat(mc);
             if (sent == null) {
                 return;
             }
-            if (sentAt > sent.size()) {
+            String box = game.chatBoxText(mc);
+            int size = sent.size();
+            if (sentAt > size) {
                 sentAt = 0;
             }
-            while (sentAt < sent.size()) {
+            boolean grew = sentAt < size;
+            while (sentAt < size) {
                 Object line = sent.get(sentAt++);
                 if (line instanceof String) {
                     handleCommand(self, ((String) line).trim());
                 }
             }
+            if (!grew && box == null && lastBox != null && size > 0 && size == lastSentSize) {
+                Object last = sent.get(size - 1);
+                if (last instanceof String && lastBox.equals(((String) last).trim())) {
+                    handleCommand(self, lastBox);
+                }
+            }
+            lastBox = box == null || box.trim().isEmpty() ? null : box.trim();
+            lastSentSize = size;
         } catch (Throwable thrown) {
             Log.once("command", thrown);
+        }
+    }
+
+    private void keyWarning(Object self) {
+        chat(self, "\u00a78Chat commands are also sent to the server. Use the overlay \u00a77Keys \u00a78button instead.");
+    }
+
+    private void applyKeys(Object self) {
+        Map<String, String> keys;
+        while ((keys = Hud.takeKeys()) != null) {
+            if (settings == null) {
+                return;
+            }
+            List<String> changed = new ArrayList<String>();
+            for (Map.Entry<String, String> entry : keys.entrySet()) {
+                String value = entry.getValue() == null ? "" : entry.getValue().trim();
+                if (!settings.setKeyNamed(entry.getKey(), value)) {
+                    continue;
+                }
+                if ("discord".equals(entry.getKey())) {
+                    discord.setAppId(value);
+                    discord.session(sessionGames, sessionWins);
+                }
+                if ("hypixel".equals(entry.getKey())) {
+                    lookedUp.clear();
+                    lookupFailures.clear();
+                } else if ("urchin".equals(entry.getKey()) || "seraph".equals(entry.getKey())) {
+                    tagLooked.clear();
+                } else if (entry.getKey().startsWith("sniper")) {
+                    sniperLooked.clear();
+                }
+                changed.add(entry.getKey() + (value.isEmpty() ? " cleared" : " set"));
+            }
+            if (!changed.isEmpty()) {
+                StringBuilder line = new StringBuilder("\u00a77Keys updated: \u00a7f");
+                for (int i = 0; i < changed.size(); i++) {
+                    line.append(i == 0 ? "" : "\u00a77, \u00a7f").append(changed.get(i));
+                }
+                chat(self, line.toString());
+            }
         }
     }
 
@@ -505,11 +615,16 @@ final class Detector {
         String sub = parts.length < 2 ? "help" : parts[1].toLowerCase(Locale.ROOT);
         if ("help".equals(sub) || "?".equals(sub)) {
             chat(self, "\u00a77/sd list [page] \u00a78saved flags");
-            chat(self, "\u00a77/sd check <name> \u00a78one player");
+            chat(self, "\u00a77/sd check <name> \u00a78one player, evidence and encounters");
             chat(self, "\u00a77/sd clear confirm \u00a78delete every saved player");
-            chat(self, "\u00a77/sd gui \u00a78reopen the lobby window");
+            chat(self, "\u00a77/sd gui \u00a78reopen the lobby window \u00a78(gear button: themes, columns, alerts)");
+            chat(self, "\u00a77/sd checks [code on|off] \u00a78list or toggle checks");
+            chat(self, "\u00a77/sd dodge [on|off] \u00a78dodge warnings in lobbies");
+            chat(self, "\u00a77/sd export \u00a78flags and encounters to CSV");
+            chat(self, "\u00a77/sd reload \u00a78re-read config files");
             chat(self, "\u00a77/sd friend <name> \u00a78never check them");
             chat(self, "\u00a77/sd unfriend <name>");
+            chat(self, "\u00a77API keys: \u00a7fKeys \u00a77button in the overlay \u00a78(chat commands also reach the server)");
             chat(self, "\u00a77/sd key <hypixel-api-key> \u00a78nicks + FKDR");
             chat(self, "\u00a77/sd sniper <key|url|off> \u00a78anti-sniper");
             chat(self, "\u00a77/sd borderless \u00a78keep overlay on top");
@@ -544,11 +659,19 @@ final class Detector {
             }
             String name = parts[2];
             FlagStore.Record record = store.get(null, name);
-            if (record == null) {
-                chat(self, "\u00a77No flags for \u00a7f" + name + "\u00a77.");
-                return;
+            chat(self, record != null ? recordLine(record) : "\u00a77No flags for \u00a7f" + name + "\u00a77.");
+            if (record != null) {
+                for (Map.Entry<String, String> detail : record.evidence.entrySet()) {
+                    chat(self, "\u00a78  " + detail.getKey() + ": \u00a77" + detail.getValue());
+                }
             }
-            chat(self, recordLine(record));
+            Encounters.Entry seen = encounters == null ? null
+                    : encounters.get(record != null && record.uuid != null ? parseUuid(record.uuid) : null, name);
+            if (seen != null) {
+                SimpleDateFormat day = new SimpleDateFormat("MMM d yyyy", Locale.ENGLISH);
+                chat(self, "\u00a77Seen \u00a7f" + seen.count + "x\u00a77, first \u00a7f" + day.format(new Date(seen.first))
+                        + "\u00a77, last \u00a7f" + day.format(new Date(seen.last)));
+            }
             return;
         }
         if ("friend".equals(sub) || "friends".equals(sub) || "ignore".equals(sub)) {
@@ -579,6 +702,7 @@ final class Detector {
             }
             settings.setKey(parts[2]);
             chat(self, "\u00a77API key saved. Nicks and high FKDR will be checked.");
+            keyWarning(self);
             return;
         }
         if ("sniper".equals(sub) || "antisniper".equals(sub)) {
@@ -608,6 +732,7 @@ final class Detector {
             }
             settings.setSniperKey(parts[2]);
             chat(self, "\u00a77Anti-sniper key saved.");
+            keyWarning(self);
             return;
         }
         if ("borderless".equals(sub)) {
@@ -638,6 +763,7 @@ final class Detector {
             }
             settings.setUrchin(parts[2]);
             chat(self, "\u00a77Urchin key saved. Lobby players will be tagged.");
+            keyWarning(self);
             return;
         }
         if ("seraph".equals(sub)) {
@@ -655,6 +781,7 @@ final class Detector {
             }
             settings.setSeraph(parts[2]);
             chat(self, "\u00a77Seraph key saved.");
+            keyWarning(self);
             return;
         }
         if ("nick".equals(sub) || "denick".equals(sub)) {
@@ -690,6 +817,40 @@ final class Detector {
             blacklistCommand(self, parts);
             return;
         }
+        if ("checks".equals(sub)) {
+            checksCommand(self, parts);
+            return;
+        }
+        if ("export".equals(sub)) {
+            File out = Export.write(root, store, encounters, new Date());
+            chat(self, "\u00a77Exported " + store.size() + " players to \u00a7f" + out.getName()
+                    + "\u00a77. \u00a78Click to copy the path.", out.getAbsolutePath());
+            return;
+        }
+        if ("reload".equals(sub)) {
+            reload(self);
+            return;
+        }
+        if ("dodge".equals(sub)) {
+            if (settings == null) {
+                return;
+            }
+            if (parts.length >= 3) {
+                boolean on = "on".equalsIgnoreCase(parts[2]);
+                if (!on && !"off".equalsIgnoreCase(parts[2])) {
+                    chat(self, "\u00a77Usage: /sd dodge [on|off]");
+                    return;
+                }
+                settings.set("dodgeEnabled", on);
+            }
+            chat(self, String.format(Locale.US, "\u00a77Dodge warnings %s\u00a77: FKDR \u00a7f%s\u00a77 (%d+ stars), sniper \u00a7f%s"
+                    + "\u00a77, blacklist %s\u00a77, flagged %s\u00a77, tags %s",
+                    settings.dodgeEnabled ? "\u00a7aon" : "\u00a7coff",
+                    settings.dodgeFkdr > 0 ? String.format(Locale.US, "%.1f", settings.dodgeFkdr) : "off",
+                    settings.dodgeStars, settings.dodgeSniper > 0 ? String.valueOf(settings.dodgeSniper) : "off",
+                    onOff(settings.dodgeBlacklist), onOff(settings.dodgeFlagged), onOff(settings.dodgeTags)));
+            return;
+        }
         if ("aurora".equals(sub)) {
             if (settings == null) {
                 return;
@@ -706,6 +867,7 @@ final class Detector {
             }
             settings.setAurora(parts[2]);
             chat(self, "\u00a77Aurora key saved. Nicked players will be looked up.");
+            keyWarning(self);
             return;
         }
         if ("clear".equals(sub) || "wipe".equals(sub)) {
@@ -775,34 +937,25 @@ final class Detector {
         }
     }
 
-    private void lobbyWindow(Object mc, UUID selfId) {
+    private void lobbyWindow(Object self, Object[] tabs, UUID selfId) {
         if (store == null) {
             return;
-        }
-        if (Hud.takeRefresh()) {
-            lookedUp.clear();
-            intel.clear();
-            intelByName.clear();
-            sniperLooked.clear();
-            tagLooked.clear();
         }
         List<Hud.Row> rows = new ArrayList<Hud.Row>();
         int players = 0;
         try {
-            if (game.canUseTab()) {
-                for (Object info : game.tabEntries(mc)) {
-                    if (info == null) {
-                        continue;
-                    }
-                    UUID id = game.tabUuid(info);
-                    String name = game.tabName(info);
-                    if (id == null || id.equals(selfId)) {
-                        continue;
-                    }
-                    players++;
-                    addLobbyRow(rows, id, name);
-                    learnSkin(info, id, name);
+            for (Object info : tabs) {
+                if (info == null) {
+                    continue;
                 }
+                UUID id = game.tabUuid(info);
+                String name = game.tabName(info);
+                if (id == null || id.equals(selfId) || notPlayer(id, name)) {
+                    continue;
+                }
+                players++;
+                addLobbyRow(rows, id, name, info);
+                learnSkin(info, id, name);
             }
         } catch (Throwable thrown) {
             Log.once("lobby window tab", thrown);
@@ -813,7 +966,7 @@ final class Detector {
         }
         for (String extra : lobbyChat.fromChat) {
             if (seen.add(extra.toLowerCase(Locale.ROOT))) {
-                addLobbyRow(rows, null, extra);
+                addLobbyRow(rows, null, extra, null);
                 players++;
             }
         }
@@ -829,18 +982,26 @@ final class Detector {
                     name = entity == null ? null : game.name(entity);
                 } catch (Throwable ignored) {
                 }
-                addLobbyRow(rows, snap.uuid, name != null ? name : snap.uuid.toString());
+                addLobbyRow(rows, snap.uuid, name != null ? name : snap.uuid.toString(), null);
             }
         }
+        dodgeWarnings(self, rows);
         List<Hud.Row> saved = new ArrayList<Hud.Row>();
         for (FlagStore.Record record : store.records()) {
             if (record.flags.isEmpty()) {
                 continue;
             }
             String label = record.name != null ? record.name : record.uuid;
+            if (record.name != null && notPlayer(record.uuid == null ? null : parseUuid(record.uuid), record.name)) {
+                continue;
+            }
             int times = record.times > 0 ? record.times : record.flags.size();
-            saved.add(new Hud.Row(label, store.plainTags(record), times, Hud.lastLabel(record),
-                    record.lastCheckAt));
+            Hud.Row row = new Hud.Row(label, store.plainTags(record), times, Hud.lastLabel(record),
+                    record.lastCheckAt);
+            row.blacklisted = blacklist != null && blacklist.contains(label);
+            row.friend = skipped(label);
+            row.evidence = newestDetail(record);
+            saved.add(row);
         }
         Hud.show(players, rows, saved);
     }
@@ -869,18 +1030,15 @@ final class Detector {
      * Tab is membership only (real connected players vs Hypixel NPCs), not a cheat signal.
      * Empty tab — tests, or tab not ready — falls back to name / UUID version.
      */
-    private Set<UUID> tabPlayerIds(Object mc, UUID selfId) {
+    private Set<UUID> tabPlayerIds(Object[] tabs, UUID selfId) {
         Set<UUID> ids = new HashSet<UUID>();
-        if (!game.canUseTab()) {
-            return ids;
-        }
         try {
-            for (Object info : game.tabEntries(mc)) {
+            for (Object info : tabs) {
                 if (info == null) {
                     continue;
                 }
                 UUID id = game.tabUuid(info);
-                if (id == null || id.equals(selfId)) {
+                if (id == null || id.equals(selfId) || notPlayer(id, game.tabName(info))) {
                     continue;
                 }
                 ids.add(id);
@@ -895,25 +1053,20 @@ final class Detector {
         if (name == null) {
             return false;
         }
-        if (settings != null && settings.isFriend(name)) {
-            return true;
-        }
-        String lower = name.toLowerCase(Locale.ROOT);
-        return "trnsmt".equals(lower) || "zoxide".equals(lower);
+        return settings != null && settings.isFriend(name);
     }
 
     private void incoming(Object mc, Object self) {
         try {
-            List<String> lines = game.receivedChat(mc);
-            if (lines.size() < receivedAt) {
-                receivedAt = 0;
+            Object[] lines = game.chatLines(mc);
+            for (int i = freshChat(lines) - 1; i >= 0; i--) {
+                lobbyChat.line(game.chatLineText(lines[i]));
             }
-            while (receivedAt < lines.size()) {
-                lobbyChat.line(lines.get(receivedAt++));
-            }
+            seenChat = Arrays.copyOf(lines, Math.min(CHAT_MEMORY, lines.length));
             if (lobbyChat.won) {
                 lobbyChat.won = false;
                 sessionWins++;
+                discord.session(sessionGames, sessionWins);
             }
             if (lobbyChat.takeAutoWho() && tick - lastWhoAt > 80L) {
                 lastWhoAt = tick;
@@ -927,6 +1080,29 @@ final class Detector {
         } catch (Throwable thrown) {
             Log.once("incoming chat", thrown);
         }
+    }
+
+    /**
+     * How many lines at the front of the newest-first chat list arrived since the last frame. Several
+     * recent lines are remembered because a server can delete a single line by id. The first call only
+     * primes, so chat from before the agent started is not replayed.
+     */
+    private int freshChat(Object[] lines) {
+        if (!chatPrimed) {
+            chatPrimed = true;
+            return 0;
+        }
+        if (seenChat == null || seenChat.length == 0) {
+            return lines.length;
+        }
+        for (int i = 0; i < lines.length; i++) {
+            for (Object seen : seenChat) {
+                if (lines[i] == seen) {
+                    return i;
+                }
+            }
+        }
+        return lines.length;
     }
 
     private void friendsCommand(Object self, String[] parts) {
@@ -975,8 +1151,8 @@ final class Detector {
         if (name == null || store == null) {
             return;
         }
-        for (FlagStore.Record record : store.records()) {
-            if (record == null || !store.hasCheat(record) || record.name == null) {
+        for (FlagStore.Record record : store.cheaters()) {
+            if (record.name == null) {
                 continue;
             }
             if (id != null && id.toString().equals(record.uuid)) {
@@ -1062,6 +1238,15 @@ final class Detector {
     }
 
     private void applyHypixel(Object self) {
+        String failed;
+        while ((failed = hypixel.pollFailed()) != null) {
+            Integer tries = lookupFailures.get(failed);
+            int next = tries == null ? 1 : tries.intValue() + 1;
+            lookupFailures.put(failed, next);
+            if (next < LOOKUP_RETRIES) {
+                lookedUp.remove(failed);
+            }
+        }
         Hypixel.Result result;
         while ((result = hypixel.poll()) != null) {
             Intel info = intelPut(result.id, result.name);
@@ -1076,11 +1261,12 @@ final class Detector {
             }
             info.sniper = AntiSniper.withSession(info.sniper, result.lastLogin);
             info.nicked = result.nicked;
-            if (result.nicked) {
+            if (result.nicked && !notPlayer(result.id, result.name)) {
                 note(self, result.id, result.name, FlagStore.Flag.NK, "nicked");
                 if (settings != null && settings.hasAurora() && denick != null && result.id != null
-                        && auroraLooked.add(result.id)) {
-                    denick.submitAurora(settings.auroraKey, result.id, result.name);
+                        && auroraLooked.add(result.id)
+                        && !denick.submitAurora(settings.auroraKey, result.id, result.name)) {
+                    auroraLooked.remove(result.id);
                 }
             } else if (result.fkdr >= SWEAT_FKDR && result.finals >= SWEAT_FINALS) {
                 String detail = (result.stars > 0 ? result.stars + " stars, " : "")
@@ -1141,22 +1327,27 @@ final class Detector {
 
     private boolean overlayHud(Object self) {
         boolean dirty = false;
-        Boolean tab = Hud.takeTabMarks();
-        if (tab != null && settings != null) {
-            settings.setTabMarks(tab);
-            chat(self, tab ? "\u00a77Tab marks on." : "\u00a77Tab marks off.");
-            dirty = true;
+        Map<String, Object> values;
+        while ((values = Hud.takeSet()) != null) {
+            if (settings == null) {
+                continue;
+            }
+            for (Map.Entry<String, Object> entry : values.entrySet()) {
+                if (!settings.set(entry.getKey(), entry.getValue())) {
+                    Log.info("Overlay sent an unknown or invalid option: " + entry.getKey());
+                    continue;
+                }
+                dirty = true;
+                String label = OPTION_LABELS.get(entry.getKey());
+                if (label != null && entry.getValue() instanceof Boolean) {
+                    chat(self, "\u00a77" + label + (Boolean.TRUE.equals(entry.getValue()) ? " on." : " off."));
+                }
+            }
+            optionsChanged();
         }
-        Boolean chatOn = Hud.takeAlertsChat();
-        if (chatOn != null && settings != null) {
-            settings.setAlertsChat(chatOn);
-            chat(self, chatOn ? "\u00a77Chat alerts on." : "\u00a77Chat alerts off.");
-            dirty = true;
-        }
-        Boolean sound = Hud.takeAlertSound();
-        if (sound != null && settings != null) {
-            settings.setAlertSound(sound);
-            chat(self, sound ? "\u00a77Alert sound on." : "\u00a77Alert sound off.");
+        String[] action;
+        while ((action = Hud.takeAction()) != null) {
+            rowAction(self, action[0], action[1]);
             dirty = true;
         }
         if (Hud.takeClear() && store != null) {
@@ -1170,6 +1361,7 @@ final class Detector {
         }
         if (Hud.takeRefresh()) {
             lookedUp.clear();
+            lookupFailures.clear();
             intel.clear();
             intelByName.clear();
             sniperLooked.clear();
@@ -1188,6 +1380,85 @@ final class Detector {
             dirty = true;
         }
         return dirty;
+    }
+
+    private static final Map<String, String> OPTION_LABELS = new HashMap<String, String>();
+
+    static {
+        OPTION_LABELS.put("tabMarks", "Tab marks");
+        OPTION_LABELS.put("alertsChat", "Chat alerts");
+        OPTION_LABELS.put("alertSound", "Alert sound");
+        OPTION_LABELS.put("dodgeEnabled", "Dodge warnings");
+        OPTION_LABELS.put("updateCheck", "Update check");
+    }
+
+    /** Called after any game option changes so derived state follows. */
+    private void optionsChanged() {
+        if (settings != null) {
+            CheckConfig.use(CheckConfig.from(settings));
+        }
+    }
+
+    /** Re-reads every config file after saving pending changes, for edits made outside the game. */
+    private void reload(Object self) {
+        store.flush(true);
+        encounters.flush(true);
+        Files2.drain(3000L);
+        settings = new Settings(root);
+        blacklist.reload();
+        store.reload();
+        encounters.reload();
+        CheckConfig.use(CheckConfig.from(settings));
+        Hud.bind(settings);
+        Hud.bump();
+        chat(self, "\u00a77Reloaded: \u00a7f" + store.size() + "\u00a77 saved players, \u00a7f" + blacklist.names.size()
+                + "\u00a77 blacklisted, \u00a7f" + encounters.size() + "\u00a77 encounters.");
+    }
+
+    private static String onOff(boolean on) {
+        return on ? "\u00a7aon" : "\u00a78off";
+    }
+
+    private void checksCommand(Object self, String[] parts) {
+        if (settings == null) {
+            return;
+        }
+        if (parts.length >= 4) {
+            FlagStore.Flag flag = Settings.flag(parts[2]);
+            boolean on = "on".equalsIgnoreCase(parts[3]) || "true".equalsIgnoreCase(parts[3]);
+            boolean off = "off".equalsIgnoreCase(parts[3]) || "false".equalsIgnoreCase(parts[3]);
+            if (flag == null || !Arrays.asList(CheckConfig.CHECKS).contains(flag) || (!on && !off)) {
+                chat(self, "\u00a77Usage: /sd checks <code> on|off \u00a78e.g. /sd checks SP off");
+                return;
+            }
+            settings.setCheckEnabled(flag.name(), on);
+            optionsChanged();
+            chat(self, "\u00a77" + CheckConfig.label(flag) + (on ? " on." : " off."));
+            return;
+        }
+        CheckConfig config = CheckConfig.current();
+        StringBuilder line = new StringBuilder("\u00a77Checks:");
+        for (FlagStore.Flag flag : CheckConfig.CHECKS) {
+            line.append(config.enabled(flag) ? " \u00a7a" : " \u00a78").append(flag.name());
+        }
+        chat(self, line.toString());
+        chat(self, String.format(Locale.US, "\u00a77Sensitivity \u00a7f%s\u00a77, reach \u00a7f%.2f\u00a77, aura angle \u00a7f%.0f"
+                + "\u00a77, CPS \u00a7f%d\u00a77, speed \u00a7f%.2f \u00a78/sd checks <code> on|off", config.sensitivity,
+                config.reachFlag, config.kaAngle, config.acMinCps, config.speedLimit));
+    }
+
+    private void rowAction(Object self, String action, String name) {
+        if ("unblacklist".equals(action)) {
+            if (blacklist != null && blacklist.remove(name)) {
+                chat(self, "\u00a7f" + name + " \u00a77removed from blacklist.");
+            }
+        } else if ("friend".equals(action)) {
+            if (settings != null && settings.addFriend(name)) {
+                chat(self, "\u00a77Will not check \u00a7f" + name + "\u00a77.");
+            }
+        } else if ("unfriend".equals(action)) {
+            unfriend(self, name);
+        }
     }
 
     private void blacklistCommand(Object self, String[] parts) {
@@ -1252,49 +1523,75 @@ final class Detector {
     }
 
     private static boolean npc(UUID id, String name, Set<UUID> tabIds) {
-        if (id.version() == 2) {
-            return true;
-        }
-        if (hypixelBotName(name)) {
+        if (notPlayer(id, name)) {
             return true;
         }
         return tabIds != null && !tabIds.isEmpty() && !tabIds.contains(id);
     }
 
-    /** Hypixel NPC names like {@code 7w0392l04b}: 10 lowercase alphanumerics, starts with a digit. */
+    /** Hypixel NPCs: version-2 UUIDs, names Mojang would never allow, or generated bot names. */
+    static boolean notPlayer(UUID id, String name) {
+        if (id != null && id.version() == 2) {
+            return true;
+        }
+        return name != null && (!validName(name) || hypixelBotName(name));
+    }
+
+    /** Minecraft account names: 1-16 of letters, digits and underscore. */
+    static boolean validName(String name) {
+        if (name.isEmpty() || name.length() > 16) {
+            return false;
+        }
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (!(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9') && c != '_') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Hypixel NPC names like {@code 7w0392l04b} or {@code a0xs6blwe3}: 10 lowercase alphanumerics where
+     * letters and digits switch back and forth at least three times, which real names like
+     * {@code john123456} don't.
+     */
     static boolean hypixelBotName(String name) {
         if (name == null || name.length() != 10) {
             return false;
         }
-        if (name.charAt(0) < '0' || name.charAt(0) > '9') {
-            return false;
-        }
-        boolean letter = false;
+        int switches = 0;
         for (int i = 0; i < 10; i++) {
             char c = name.charAt(i);
-            if (c >= '0' && c <= '9') {
-                continue;
+            boolean digit = c >= '0' && c <= '9';
+            if (!digit && (c < 'a' || c > 'z')) {
+                return false;
             }
-            if (c >= 'a' && c <= 'z') {
-                letter = true;
-                continue;
+            if (i > 0) {
+                char prev = name.charAt(i - 1);
+                if (digit != (prev >= '0' && prev <= '9')) {
+                    switches++;
+                }
             }
-            return false;
         }
-        return letter;
+        return switches >= 3;
     }
 
-    private void addLobbyRow(List<Hud.Row> rows, UUID id, String name) {
-        if (hypixelBotName(name) || skipped(name)) {
-            return;
+    private Hud.Row addLobbyRow(List<Hud.Row> rows, UUID id, String name, Object tabInfo) {
+        if (notPlayer(id, name)) {
+            return null;
         }
+        boolean friend = skipped(name);
         if (settings != null) {
             name = settings.realName(name);
         }
-        requestIntel(id, name);
+        if (!friend) {
+            requestIntel(id, name);
+        }
         FlagStore.Record record = store.get(id, name);
         String tags = store.plainTags(record);
-        if (blacklist != null && blacklist.contains(name)) {
+        boolean listed = blacklist != null && blacklist.contains(name);
+        if (listed) {
             tags = tags == null || tags.isEmpty() ? "[BL]" : "[BL] " + tags;
         }
         Intel info = intelFor(id, name);
@@ -1314,8 +1611,66 @@ final class Detector {
         if (sniper < 0) {
             sniper = AntiSniper.localScore(fkdr, wlr);
         }
-        rows.add(new Hud.Row(label, tags, times, Hud.lastLabel(record), lastAt, stars, fkdr, wlr, streak,
-                finals, wins, sniper));
+        Hud.Row row = new Hud.Row(label, tags, times, Hud.lastLabel(record), lastAt, stars, fkdr, wlr, streak,
+                finals, wins, sniper);
+        row.blacklisted = listed;
+        row.friend = friend;
+        row.team = game.tabTeamColor(tabInfo, id == null ? null : nearbyEntities.get(id));
+        row.evidence = newestDetail(record);
+        boolean cheat = store.hasCheat(record) && !flaggedHere.contains(label.toLowerCase(Locale.ROOT));
+        row.threat = Dodge.from(settings).evaluate(friend, listed, cheat,
+                info == null ? "" : info.extra, info == null ? -1 : sniper, fkdr, stars);
+        Encounters.Entry seen = encounters == null ? null : encounters.saw(id, label, worldSeq);
+        if (seen != null) {
+            row.seen = seen.count;
+            row.seenAt = seen.previous;
+        }
+        rows.add(row);
+        return row;
+    }
+
+    /** One chat line, sound and title per threatening player per world. */
+    private void dodgeWarnings(Object self, List<Hud.Row> rows) {
+        for (Hud.Row row : rows) {
+            if (row.threat == null || row.threat.isEmpty() || !dodgeWarned.add(row.name.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            chat(self, "\u00a7c\u00a7lDODGE? \u00a7f" + row.name + " \u00a77- \u00a7c" + row.threat, Hud.wdr(row.name));
+            Log.info("Dodge warning: " + row.name + " - " + row.threat);
+            try {
+                if (settings == null || settings.alertSound) {
+                    game.playSound(self, "mob.wither.spawn", 0.4f, 1.2f);
+                }
+                game.title(game.minecraft(), "\u00a7cDodge?", "\u00a7f" + row.name + " \u00a77" + row.threat);
+            } catch (Throwable thrown) {
+                Log.once("dodge alert", thrown);
+            }
+        }
+    }
+
+    private static UUID parseUuid(String text) {
+        try {
+            return UUID.fromString(text);
+        } catch (IllegalArgumentException bad) {
+            return null;
+        }
+    }
+
+    /** Detail text of the flag saved most recently, or empty. */
+    private static String newestDetail(FlagStore.Record record) {
+        if (record == null) {
+            return "";
+        }
+        if (record.lastCheck != null && !record.lastCheck.isEmpty()) {
+            return record.lastCheck;
+        }
+        String newest = "";
+        for (String detail : record.details.values()) {
+            if (detail != null && !detail.isEmpty()) {
+                newest = detail;
+            }
+        }
+        return newest;
     }
 
     private Intel intelFor(UUID id, String name) {
@@ -1344,37 +1699,41 @@ final class Detector {
         if (name == null || settings == null) {
             return;
         }
-        String token = (id != null ? id.toString() : name).toLowerCase(Locale.ROOT);
-        if (settings.hasKey() && lookedUp.add(token)) {
-            hypixel.submit(settings.hypixelKey, id, name);
+        String token = Hypixel.token(id, name);
+        if (settings.hasKey() && lookedUp.add(token) && !hypixel.submit(settings.hypixelKey, id, name)) {
+            lookedUp.remove(token);
         }
         if (id == null) {
             return;
         }
-        if (settings.hasSniper() && sniperLooked.add(id)) {
-            snipers.submit(settings.sniperRequest(id, name), id, name);
+        if (settings.hasSniper() && sniperLooked.add(id) && !snipers.submit(settings.sniperRequest(id, name), id, name)) {
+            sniperLooked.remove(id);
         }
         if (tagLooked.add(id)) {
+            boolean queued = true;
             if (settings.urchinKey != null && !settings.urchinKey.isEmpty()) {
-                tagsApi.urchin(settings.urchinKey, id, name);
+                queued &= tagsApi.urchin(settings.urchinKey, id, name);
             }
             if (settings.seraphKey != null && !settings.seraphKey.isEmpty()) {
-                tagsApi.seraph(settings.seraphKey, id, name);
+                queued &= tagsApi.seraph(settings.seraphKey, id, name);
+            }
+            if (!queued) {
+                tagLooked.remove(id);
             }
         }
     }
 
-    private void tab(Object mc) {
+    private void tab(Object[] tabs) {
         if (!game.canUseTab() || store == null) {
             return;
         }
         if (settings != null && !settings.tabMarks) {
-            restoreTab(mc);
+            restoreTab(tabs);
             return;
         }
         try {
             Set<UUID> seen = new HashSet<UUID>();
-            for (Object info : game.tabEntries(mc)) {
+            for (Object info : tabs) {
                 if (info == null) {
                     continue;
                 }
@@ -1393,27 +1752,33 @@ final class Detector {
                     if (tabApplied.containsKey(id) || ourTab(current)) {
                         game.setTabDisplayName(info, tabOriginal.get(id));
                         tabApplied.remove(id);
+                        tabLabels.remove(id);
                     }
                     continue;
                 }
                 String label = (name != null ? name : id.toString()) + TAB_MARK + tags;
+                if (current != null && current == tabApplied.get(id) && label.equals(tabLabels.get(id))) {
+                    continue;
+                }
                 Object shown = game.textComponent(label);
                 game.setTabDisplayName(info, shown);
                 tabApplied.put(id, shown);
+                tabLabels.put(id, label);
             }
             tabApplied.keySet().retainAll(seen);
             tabOriginal.keySet().retainAll(seen);
+            tabLabels.keySet().retainAll(seen);
         } catch (Throwable thrown) {
             Log.once("tab", thrown);
         }
     }
 
-    private void restoreTab(Object mc) {
+    private void restoreTab(Object[] tabs) {
         if (tabApplied.isEmpty()) {
             return;
         }
         try {
-            for (Object info : game.tabEntries(mc)) {
+            for (Object info : tabs) {
                 if (info == null) {
                     continue;
                 }
@@ -1427,6 +1792,7 @@ final class Detector {
             Log.once("tab restore", thrown);
         }
         tabApplied.clear();
+        tabLabels.clear();
     }
 
     private boolean ourTab(Object component) {

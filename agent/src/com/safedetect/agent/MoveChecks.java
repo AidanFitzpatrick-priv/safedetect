@@ -10,8 +10,15 @@ final class MoveChecks {
     private static final long HURT_GRACE = 40L;
     private static final double TELEPORT = 4.0;
 
-    /** Vanilla flat-ground sprint-jumping averages about 0.36 blocks per tick. */
-    private static final double SPEED_LIMIT = 0.42;
+    /*
+     * The speed limit comes from CheckConfig (default 0.42; vanilla flat-ground sprint-jumping averages about
+     * 0.36 blocks per tick), and every tick or violation count below is scaled by its sensitivity.
+     */
+    private static final int TOWER_TICKS = 5;
+    private static final int SPRINT_SCAFFOLD_TICKS = 20;
+    private static final int VELOCITY_VL = 6;
+    private static final int GOD_TICKS = 60;
+    private static final int DIAGONAL_TICKS = 50;
     /** Vanilla jump-towering gains about 2 blocks per 20 ticks. */
     private static final double TOWER_RISE = 3.5;
     /** Walking backwards tops out near 0.22 blocks per tick without Speed. */
@@ -63,6 +70,37 @@ final class MoveChecks {
     private final long[] tellyHits = new long[8];
     private int tellyIndex;
     private boolean tellyFailed;
+    private double speedAverage;
+    private double speedLimitUsed;
+    private double towerRise;
+    private double backwardSpeed;
+    private boolean backwardSprinting;
+    private double velocityMoved;
+
+    /** What made a check fail; read before the matching reset. */
+    String evidence(FlagStore.Flag flag) {
+        switch (flag) {
+            case SP:
+                return String.format(java.util.Locale.US, "%.2f b/t avg (limit %.2f)", speedAverage, speedLimitUsed);
+            case TW:
+                return String.format(java.util.Locale.US, "rose %.1f blocks in %d ticks", towerRise, WINDOW);
+            case SS:
+                return String.format(java.util.Locale.US, "bridged backwards at %.2f b/t%s", backwardSpeed,
+                        backwardSprinting ? " while sprinting" : "");
+            case SA:
+                return snapHits.length + " 100+ deg snaps on swings in 10 s";
+            case VL:
+                return String.format(java.util.Locale.US, "moved %.2f after hit", velocityMoved);
+            case GB:
+                return "sprint-bridged without sneaking " + godTicks + " ticks";
+            case DS:
+                return "diagonal sprint-bridged " + diagTicks + " ticks";
+            case TL:
+                return tellyHits.length + " pitch flicks in 2.5 s";
+            default:
+                return "";
+        }
+    }
 
     /**
      * @param inGame false in Hypixel lobbies and Skyblock, where high speed is legitimate
@@ -209,10 +247,11 @@ final class MoveChecks {
         double moved = Math.sqrt((view.posX - kbX) * (view.posX - kbX) + (view.posZ - kbZ) * (view.posZ - kbZ));
         if (moved < 0.12) {
             velocityVl += 2;
+            velocityMoved = moved;
         } else if (velocityVl > 0) {
             velocityVl--;
         }
-        velocityFailed |= velocityVl >= 6;
+        velocityFailed |= velocityVl >= CheckConfig.current().scaled(VELOCITY_VL);
     }
 
     /** Sprint-placing glued to the ground looking down, never sneaking — cheat god-bridge machines. */
@@ -223,7 +262,7 @@ final class MoveChecks {
         boolean run = !excused && view.held == Game.HELD_BLOCK && view.pitch >= 70.0f && view.sprinting
                 && !view.sneaking && view.onGround && h > 0.22 && forward > 0.12 && Math.abs(strafe) < 0.3 * h;
         godTicks = run ? godTicks + 1 : 0;
-        godFailed |= godTicks > 60;
+        godFailed |= godTicks > CheckConfig.current().scaled(GOD_TICKS);
     }
 
     /**
@@ -237,7 +276,7 @@ final class MoveChecks {
         boolean run = !excused && view.held == Game.HELD_BLOCK && view.pitch >= 70.0f && view.sprinting
                 && !view.sneaking && view.onGround && h > 0.22 && forward > 0.08 && Math.abs(strafe) > 0.4 * h;
         diagTicks = run ? diagTicks + 1 : 0;
-        diagFailed |= diagTicks > 50;
+        diagFailed |= diagTicks > CheckConfig.current().scaled(DIAGONAL_TICKS);
     }
 
     /** Instant pitch flicks while bridging. Legit telly is a few slower flicks, not a drumroll. */
@@ -264,9 +303,15 @@ final class MoveChecks {
             speedTicks = 0;
             return;
         }
+        CheckConfig config = CheckConfig.current();
         double average = sum(horizontal) / WINDOW;
-        speedTicks = average > SPEED_LIMIT * speedFactor ? speedTicks + 1 : 0;
-        speedFailed |= speedTicks > WINDOW;
+        double limit = config.speedLimit * speedFactor;
+        speedTicks = average > limit ? speedTicks + 1 : 0;
+        if (speedTicks > 0) {
+            speedAverage = average;
+            speedLimitUsed = limit;
+        }
+        speedFailed |= speedTicks > config.scaled(WINDOW);
     }
 
     /** Rising faster than jump-placing allows while looking down at a block in hand. */
@@ -281,9 +326,13 @@ final class MoveChecks {
         if (towerRun < WINDOW || ringCount < WINDOW) {
             return;
         }
-        boolean fast = sum(vertical) > TOWER_RISE && sum(horizontal) < 2.0;
+        double rise = sum(vertical);
+        boolean fast = rise > TOWER_RISE && sum(horizontal) < 2.0;
         towerTicks = fast ? towerTicks + 1 : 0;
-        towerFailed |= towerTicks > 5;
+        if (fast) {
+            towerRise = rise;
+        }
+        towerFailed |= towerTicks > CheckConfig.current().scaled(TOWER_TICKS);
     }
 
     /** Bridging backwards while sprinting, or faster than walking backwards allows. */
@@ -298,7 +347,11 @@ final class MoveChecks {
         boolean backward = forward < -0.7 * h;
         boolean impossible = view.sprinting || h > BACKWARD_LIMIT * speedFactor;
         sprintScaffoldTicks = backward && impossible ? sprintScaffoldTicks + 1 : 0;
-        sprintScaffoldFailed |= sprintScaffoldTicks > 20;
+        if (backward && impossible) {
+            backwardSpeed = h;
+            backwardSprinting = view.sprinting;
+        }
+        sprintScaffoldFailed |= sprintScaffoldTicks > CheckConfig.current().scaled(SPRINT_SCAFFOLD_TICKS);
     }
 
     /** Head turns of 100 degrees or more in one tick that line up with a swing, five times in ten seconds. */

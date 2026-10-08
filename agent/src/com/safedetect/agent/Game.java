@@ -118,6 +118,9 @@ final class Game {
     private Method propertyGetValue;
     private Field chatLines;
     private Method chatLineComponent;
+    private Method getPlayerTeam;
+    private Method getColorPrefix;
+    private Method displayTitle;
     private boolean uiResolved;
     private Constructor<?> blockPosCtor;
     private Constructor<?> vec3Ctor;
@@ -532,33 +535,32 @@ final class Game {
         sendChatMessage.invoke(player, message);
     }
 
-    java.util.List<String> receivedChat(Object mc) {
+    /** Received chat, newest first: vanilla inserts at index 0 and trims the list to 100 lines. */
+    Object[] chatLines(Object mc) {
         try {
             resolveUi();
-            if (ingameGUI == null || getChatGUI == null || chatLines == null || chatLineComponent == null || mc == null) {
-                return java.util.Collections.emptyList();
+            if (ingameGUI == null || getChatGUI == null || chatLines == null || mc == null) {
+                return new Object[0];
             }
             Object gui = ingameGUI.get(mc);
             Object chat = gui == null ? null : getChatGUI.invoke(gui);
             Object lines = chat == null ? null : chatLines.get(chat);
-            if (!(lines instanceof java.util.List)) {
-                return java.util.Collections.emptyList();
-            }
-            java.util.List<String> out = new java.util.ArrayList<String>();
-            for (Object line : (java.util.List<?>) lines) {
-                if (line == null) {
-                    continue;
-                }
-                Object component = chatLineComponent.invoke(line);
-                String text = unformatted(component);
-                if (text != null) {
-                    out.add(text);
-                }
-            }
-            return out;
+            return lines instanceof java.util.List ? ((java.util.List<?>) lines).toArray() : new Object[0];
         } catch (Throwable thrown) {
             Log.once("received chat", thrown);
-            return java.util.Collections.emptyList();
+            return new Object[0];
+        }
+    }
+
+    String chatLineText(Object line) {
+        try {
+            if (line == null || chatLineComponent == null) {
+                return null;
+            }
+            return unformatted(chatLineComponent.invoke(line));
+        } catch (Throwable thrown) {
+            Log.once("chat line", thrown);
+            return null;
         }
     }
 
@@ -674,6 +676,92 @@ final class Game {
             return array.length == 0 ? null : array[0];
         }
         return value;
+    }
+
+    /**
+     * Colour code char of the tab entry's scoreboard team prefix, or the nearest chat colour of the
+     * player's leather chestplate when there is no coloured team. Empty when neither is known.
+     */
+    String tabTeamColor(Object info, Object entity) {
+        try {
+            resolveUi();
+            if (info != null && getPlayerTeam != null && getColorPrefix != null) {
+                Object team = getPlayerTeam.invoke(info);
+                Object prefix = team == null ? null : getColorPrefix.invoke(team);
+                char code = firstColorCode(prefix instanceof String ? (String) prefix : null);
+                if (code != 0) {
+                    return String.valueOf(code);
+                }
+            }
+            if (entity != null) {
+                int rgb = armorColor(entity);
+                if (rgb > 1) {
+                    return String.valueOf(nearestColorCode(rgb));
+                }
+            }
+        } catch (Throwable thrown) {
+            Log.once("team colour", thrown);
+        }
+        return "";
+    }
+
+    private static final String COLOR_CODES = "0123456789abcdef";
+    static final int[] CHAT_RGB = { 0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA,
+            0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF };
+
+    /** First colour (not format) code in a section-sign formatted string, or 0. */
+    static char firstColorCode(String text) {
+        if (text == null) {
+            return 0;
+        }
+        for (int i = 0; i + 1 < text.length(); i++) {
+            if (text.charAt(i) == '\u00a7') {
+                char c = Character.toLowerCase(text.charAt(i + 1));
+                if (COLOR_CODES.indexOf(c) >= 0) {
+                    return c;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /** Nearest of the 16 chat colours, skipping black and the greys that rarely mark a team. */
+    static char nearestColorCode(int rgb) {
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        int best = 15;
+        long bestDistance = Long.MAX_VALUE;
+        for (int i = 0; i < CHAT_RGB.length; i++) {
+            int c = CHAT_RGB[i];
+            long dr = r - ((c >> 16) & 0xFF);
+            long dg = g - ((c >> 8) & 0xFF);
+            long db = b - (c & 0xFF);
+            long distance = dr * dr + dg * dg + db * db;
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = i;
+            }
+        }
+        return COLOR_CODES.charAt(best);
+    }
+
+    /** Big on-screen title through GuiIngame.displayTitle; does nothing when it cannot be resolved. */
+    void title(Object mc, String title, String subtitle) {
+        try {
+            resolveUi();
+            if (mc == null || ingameGUI == null || displayTitle == null) {
+                return;
+            }
+            Object gui = ingameGUI.get(mc);
+            if (gui == null) {
+                return;
+            }
+            displayTitle.invoke(gui, null, subtitle, Integer.valueOf(5), Integer.valueOf(40), Integer.valueOf(10));
+            displayTitle.invoke(gui, title, null, Integer.valueOf(5), Integer.valueOf(40), Integer.valueOf(10));
+        } catch (Throwable thrown) {
+            Log.once("title", thrown);
+        }
     }
 
     Object tabDisplayName(Object info) throws Exception {
@@ -843,6 +931,10 @@ final class Game {
         profileGetProperties = method(gameProfile, "getProperties");
         Class<?> property = type("com.mojang.authlib.properties.Property");
         propertyGetValue = method(property, "getValue");
+        Class<?> team = type("net.minecraft.scoreboard.ScorePlayerTeam");
+        getPlayerTeam = method(playerInfo, "getPlayerTeam");
+        getColorPrefix = method(team, "getColorPrefix");
+        displayTitle = method(ingame, "displayTitle", String.class, String.class, int.class, int.class, int.class);
     }
 
     private Object heldStack(Object player) throws Exception {

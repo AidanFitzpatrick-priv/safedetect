@@ -49,27 +49,31 @@ final class Tags {
     private final ConcurrentLinkedQueue<Result> results = new ConcurrentLinkedQueue<Result>();
     private volatile boolean started;
 
-    void urchin(String key, UUID id, String name) {
+    /** False when the queue is full, so the caller can retry later. */
+    boolean urchin(String key, UUID id, String name) {
         if (key == null || key.isEmpty() || id == null) {
-            return;
+            return true;
         }
         try {
             String url = "https://api.urchin.gg/v3/cubelify?uuid=" + id.toString().replace("-", "")
                     + "&key=" + URLEncoder.encode(key, "UTF-8");
-            submit(url, key, id, name);
+            return submit(url, key, id, name);
         } catch (Exception ignored) {
+            return true;
         }
     }
 
-    void seraph(String key, UUID id, String name) {
+    /** False when the queue is full, so the caller can retry later. */
+    boolean seraph(String key, UUID id, String name) {
         if (key == null || key.isEmpty() || id == null) {
-            return;
+            return true;
         }
         try {
             String url = "https://api.seraph.si/v1/player?uuid=" + id.toString()
                     + "&key=" + URLEncoder.encode(key, "UTF-8");
-            submit(url, key, id, name);
+            return submit(url, key, id, name);
         } catch (Exception ignored) {
+            return true;
         }
     }
 
@@ -77,9 +81,9 @@ final class Tags {
         return results.poll();
     }
 
-    private void submit(String url, String key, UUID id, String name) {
+    private boolean submit(String url, String key, UUID id, String name) {
         start();
-        jobs.offer(new Job(url, key, id, name));
+        return jobs.offer(new Job(url, key, id, name));
     }
 
     private synchronized void start() {

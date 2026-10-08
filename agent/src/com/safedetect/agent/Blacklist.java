@@ -1,9 +1,6 @@
 package com.safedetect.agent;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -27,6 +24,11 @@ final class Blacklist {
 
     File file() {
         return file;
+    }
+
+    void reload() {
+        names.clear();
+        load(file);
     }
 
     boolean contains(String name) {
@@ -137,19 +139,11 @@ final class Blacklist {
     }
 
     private void save() {
-        File parent = file.getParentFile();
-        if (parent != null && !parent.isDirectory()) {
-            parent.mkdirs();
+        StringBuilder out = new StringBuilder("# SafeDetect local blacklist — one name per line\n");
+        List<String> sorted = new ArrayList<String>(names);
+        for (int i = 0; i < sorted.size(); i++) {
+            out.append(sorted.get(i)).append('\n');
         }
-        try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-            writer.write("# SafeDetect local blacklist — one name per line\n");
-            List<String> sorted = new ArrayList<String>(names);
-            for (int i = 0; i < sorted.size(); i++) {
-                writer.write(sorted.get(i));
-                writer.write('\n');
-            }
-        } catch (Throwable thrown) {
-            Log.once("blacklist write", thrown);
-        }
+        Files2.writeLater(file, out.toString());
     }
 }

@@ -2,10 +2,7 @@ package com.safedetect.agent;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -85,12 +82,13 @@ final class Denick {
         save();
     }
 
-    void submitAurora(String key, UUID id, String shown) {
+    /** False when the queue is full, so the caller can retry later. */
+    boolean submitAurora(String key, UUID id, String shown) {
         if (key == null || key.isEmpty() || shown == null || shown.isEmpty()) {
-            return;
+            return true;
         }
         start();
-        jobs.offer(new Job(key, id, shown));
+        return jobs.offer(new Job(key, id, shown));
     }
 
     Result poll() {
@@ -291,10 +289,6 @@ final class Denick {
     }
 
     private void save() {
-        File parent = file.getParentFile();
-        if (parent != null && !parent.isDirectory()) {
-            parent.mkdirs();
-        }
         StringBuilder out = new StringBuilder("{\n");
         int n = 0;
         for (Map.Entry<String, String> entry : skins.entrySet()) {
@@ -302,10 +296,6 @@ final class Denick {
                     .append(Json.quote(entry.getValue()));
         }
         out.append(n == 0 ? "}\n" : "\n}\n");
-        try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
-            writer.write(out.toString());
-        } catch (Throwable thrown) {
-            Log.once("skins write", thrown);
-        }
+        Files2.writeLater(file, out.toString());
     }
 }

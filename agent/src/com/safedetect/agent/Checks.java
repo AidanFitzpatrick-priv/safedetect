@@ -8,17 +8,20 @@ package com.safedetect.agent;
 final class Checks {
     /** Hits farther than this are not treated as melee (pearls, bow, fall). */
     private static final double HIT_RANGE = 6.0;
-    /** Further off than a legit crosshair hit as seen from another client. */
-    private static final double KA_ANGLE = 80.0;
+    /*
+     * Killaura angle (default 80, further off than a legit crosshair hit seen from another client), reach
+     * (default 3.35: vanilla is 3.0 to the hitbox, the rest is interpolation slack) and autoclicker CPS come
+     * from CheckConfig, as do the sensitivity-scaled violation counts below.
+     */
     private static final int KA_VL = 6;
     private static final int SILENT_VL = 8;
-    /** Vanilla melee is 3.0 to the hitbox; extra slack is interpolation on other clients. */
-    private static final double REACH_FLAG = 3.35;
-    private static final double REACH_BLATANT = 3.8;
+    private static final double REACH_BLATANT_EXTRA = 0.45;
+    private static final int AUTOBLOCK_TICKS = 10;
+    private static final int NOSLOW_TICKS = 20;
     private static final int AC_WINDOW = 20;
     private static final int AC_WINDOWS = 5;
-    private static final int AC_MIN_CPS = 15;
-    private static final int AC_KEEP = 100;
+    /** Enough clicks for the highest CPS setting (30) over every window. */
+    private static final int AC_KEEP = 160;
     private static final long SCAFFOLD_COOLDOWN = 60L;
     /** Consecutive script-timed crouches needed; one slow or unplaced crouch starts the count over. */
     private static final int SCAFFOLD_STREAK = 8;
@@ -32,6 +35,12 @@ final class Checks {
     private int autoBlockTicks;
 
     private int noSlowTicks;
+    private double noSlowSpeed;
+    private int kaTargets;
+    private double silentAngle;
+    private double reachMax;
+    private int reachLongHits;
+    private int acCps;
     private double lastPosX;
     private double lastPosZ;
     private boolean hasLastPos;
@@ -73,11 +82,34 @@ final class Checks {
     }
 
     boolean failedAutoBlock() {
-        return autoBlockTicks > 10;
+        return autoBlockTicks > CheckConfig.current().scaled(AUTOBLOCK_TICKS);
     }
 
     boolean failedNoSlow() {
-        return noSlowTicks > 20;
+        return noSlowTicks > CheckConfig.current().scaled(NOSLOW_TICKS);
+    }
+
+    /** What made a check fail; read before the matching reset. */
+    String evidence(FlagStore.Flag flag) {
+        switch (flag) {
+            case AB:
+                return "swung while blocking " + autoBlockTicks + " ticks";
+            case NS:
+                return String.format(java.util.Locale.US, "full speed %.2f b/t while using an item %d ticks",
+                        noSlowSpeed, noSlowTicks);
+            case KA:
+                return kaTargets + " targets in one swing";
+            case SI:
+                return String.format(java.util.Locale.US, "angle %.0f deg", silentAngle);
+            case RE:
+                return String.format(java.util.Locale.US, "reach %.2f, %d long hits", reachMax, reachLongHits);
+            case AC:
+                return acCps + " CPS x" + AC_WINDOWS + " windows";
+            case LS:
+                return streak + " script-timed crouches in a row";
+            default:
+                return "";
+        }
     }
 
     boolean failedKillaura() {
@@ -111,16 +143,20 @@ final class Checks {
     void resetKillaura() {
         killauraFailed = false;
         killauraViolations = 0;
+        kaTargets = 0;
     }
 
     void resetSilentAura() {
         silentFailed = false;
         silentViolations = 0;
+        silentAngle = 0.0;
     }
 
     void resetReach() {
         reachFailed = false;
         reachViolations = 0;
+        reachMax = 0.0;
+        reachLongHits = 0;
     }
 
     void resetAutoclicker() {
@@ -160,6 +196,9 @@ final class Checks {
                 threshold *= 1.0 + 0.2 * (view.speedAmplifier + 1);
             }
             noSlowTicks = speed > threshold ? noSlowTicks + 1 : 0;
+            if (noSlowTicks > 0) {
+                noSlowSpeed = speed;
+            }
         } else {
             noSlowTicks = 0;
         }
@@ -179,10 +218,15 @@ final class Checks {
             return;
         }
         kaWasSwinging = attacker.swinging;
+        CheckConfig config = CheckConfig.current();
+        double reachFlag = config.reachFlag;
+        double reachBlatant = reachFlag + REACH_BLATANT_EXTRA;
         int hits = 0;
         int offAngle = 0;
         int longHits = 0;
         int blatantHits = 0;
+        double widest = 0.0;
+        double farthest = 0.0;
         for (int i = 0; i < nearby.length; i++) {
             PlayerView other = nearby[i];
             if (other == null || other.uuid == null || other.uuid.equals(attacker.uuid)) {
@@ -199,29 +243,36 @@ final class Checks {
                 continue;
             }
             hits++;
-            if (lookAngle(attacker, other) >= KA_ANGLE) {
+            double angle = lookAngle(attacker, other);
+            if (angle >= config.kaAngle) {
                 offAngle++;
+                widest = Math.max(widest, angle);
             }
-            if (dist >= REACH_BLATANT) {
+            if (dist >= reachBlatant) {
                 blatantHits++;
                 longHits++;
-            } else if (dist >= REACH_FLAG) {
+            } else if (dist >= reachFlag) {
                 longHits++;
+            }
+            if (dist >= reachFlag) {
+                farthest = Math.max(farthest, dist);
             }
         }
         if (hits >= 2) {
             killauraViolations += 3;
+            kaTargets = Math.max(kaTargets, hits);
         } else if (killauraViolations > 0 && hits <= 1) {
             killauraViolations--;
         }
-        killauraFailed |= killauraViolations >= KA_VL;
+        killauraFailed |= killauraViolations >= config.scaled(KA_VL);
 
         if (hits >= 1 && offAngle == hits) {
             silentViolations += 2;
+            silentAngle = Math.max(silentAngle, widest);
         } else if (hits >= 1) {
             silentViolations = Math.max(0, silentViolations - 2);
         }
-        silentFailed |= silentViolations >= SILENT_VL;
+        silentFailed |= silentViolations >= config.scaled(SILENT_VL);
 
         if (blatantHits > 0) {
             reachViolations += 3;
@@ -230,7 +281,11 @@ final class Checks {
         } else if (hits >= 1) {
             reachViolations = Math.max(0, reachViolations - 2);
         }
-        reachFailed |= reachViolations >= KA_VL;
+        if (longHits > 0) {
+            reachLongHits += longHits;
+            reachMax = Math.max(reachMax, farthest);
+        }
+        reachFailed |= reachViolations >= config.scaled(KA_VL);
     }
 
     /** Only the nearest player who started a swing this tick is blamed for a hit. */
@@ -290,7 +345,8 @@ final class Checks {
             }
         }
         int span = AC_WINDOW * AC_WINDOWS;
-        if (clickCount < AC_MIN_CPS * AC_WINDOWS || oldestClick() > tick - span + 1) {
+        int minCps = CheckConfig.current().acMinCps;
+        if (clickCount < minCps * AC_WINDOWS || oldestClick() > tick - span + 1) {
             return;
         }
         int min = Integer.MAX_VALUE;
@@ -305,7 +361,10 @@ final class Checks {
                 max = cps;
             }
         }
-        autoclickerFailed |= min >= AC_MIN_CPS && max == min;
+        if (min >= minCps && max == min) {
+            autoclickerFailed = true;
+            acCps = min;
+        }
     }
 
     private long oldestClick() {
@@ -417,7 +476,7 @@ final class Checks {
         if (lastCounted != Long.MIN_VALUE && tick - lastCounted > SCAFFOLD_GAP) {
             streak = 0;
         }
-        if (streak >= SCAFFOLD_STREAK && tick - lastScaffoldFlag >= SCAFFOLD_COOLDOWN) {
+        if (streak >= CheckConfig.current().scaled(SCAFFOLD_STREAK) && tick - lastScaffoldFlag >= SCAFFOLD_COOLDOWN) {
             scaffoldFailed = true;
             lastScaffoldFlag = tick;
         }
