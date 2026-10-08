@@ -72,7 +72,9 @@ public final class Overlay implements SettingsPanel.Host {
     private static final Map<String, Object> SENT_OPTIONS = new ConcurrentHashMap<String, Object>();
     private static final Map<String, Long> SENT_AT = new ConcurrentHashMap<String, Long>();
     private static final Map<String, Boolean> KEYS_SET = new ConcurrentHashMap<String, Boolean>();
+    private static final List<Hud.PluginCard> PLUGIN_CARDS = new ArrayList<Hud.PluginCard>();
     private static volatile String sessionText = "";
+    private static volatile String noticeText = "";
     private static Overlay instance;
     private static File dataDir;
 
@@ -128,10 +130,17 @@ public final class Overlay implements SettingsPanel.Host {
                 Hud.Snapshot snap = Hud.readState();
                 if (snap != null) {
                     sessionText = snap.session == null ? "" : snap.session;
+                    noticeText = snap.notice == null ? "" : snap.notice;
                     GAME_OPTIONS.clear();
                     GAME_OPTIONS.putAll(snap.options);
                     KEYS_SET.clear();
                     KEYS_SET.putAll(snap.keysSet);
+                    synchronized (PLUGIN_CARDS) {
+                        PLUGIN_CARDS.clear();
+                        if (snap.plugins != null) {
+                            PLUGIN_CARDS.addAll(snap.plugins);
+                        }
+                    }
                     boolean reopenNow = lastReopen >= 0L && snap.reopen != lastReopen;
                     boolean refreshNow = lastRefresh >= 0L && snap.refresh != lastRefresh;
                     lastReopen = snap.reopen;
@@ -190,6 +199,27 @@ public final class Overlay implements SettingsPanel.Host {
 
     static boolean keySet(String name) {
         return Boolean.TRUE.equals(KEYS_SET.get(name));
+    }
+
+    static List<Hud.PluginCard> plugins() {
+        synchronized (PLUGIN_CARDS) {
+            return new ArrayList<Hud.PluginCard>(PLUGIN_CARDS);
+        }
+    }
+
+    static void setPlugin(String id, boolean on) {
+        Hud.writePlugin(id, on);
+        synchronized (PLUGIN_CARDS) {
+            for (Hud.PluginCard card : PLUGIN_CARDS) {
+                if (id.equals(card.id)) {
+                    card.on = on;
+                }
+            }
+        }
+    }
+
+    static String notice() {
+        return noticeText == null ? "" : noticeText;
     }
 
     // ---- window ----
@@ -322,6 +352,9 @@ public final class Overlay implements SettingsPanel.Host {
         brand.setForeground(theme.fg);
         brand.setIcon(new LogoIcon());
         brand.setIconTextGap(8);
+        if (!notice().isEmpty()) {
+            brand.setToolTipText(notice());
+        }
         JPanel left = new JPanel(new BorderLayout(14, 0));
         left.setOpaque(false);
         left.add(brand, BorderLayout.WEST);
@@ -610,6 +643,13 @@ public final class Overlay implements SettingsPanel.Host {
             @Override
             public void run() {
                 openSettings("Keys");
+            }
+        }));
+        options.add(action("Update", "Download the latest SafeDetect and restart this window", false, new Runnable() {
+            @Override
+            public void run() {
+                Hud.writeUpdate();
+                openSettings("Alerts");
             }
         }));
         paintPrefs();
@@ -1162,10 +1202,12 @@ public final class Overlay implements SettingsPanel.Host {
     private void apply(int count, List<Hud.Row> nextLobby, List<Hud.Row> nextSaved, boolean force) {
         paintPrefs();
         brand.setText(brandText());
+        brand.setToolTipText(notice().isEmpty() ? null : notice());
         if (settings != null && settingsOpen) {
             settings.refresh();
         }
-        StringBuilder key = new StringBuilder().append(count).append('|').append(sessionText);
+        StringBuilder key = new StringBuilder().append(count).append('|').append(sessionText)
+                .append('|').append(notice());
         for (List<Hud.Row> list : java.util.Arrays.asList(nextLobby, nextSaved)) {
             key.append('#');
             for (Hud.Row row : list) {

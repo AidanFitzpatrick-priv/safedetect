@@ -34,6 +34,7 @@ final class Settings {
     boolean tabMarks = true;
     boolean alertsChat = true;
     boolean alertSound = true;
+    boolean chatHovers = true;
     final java.util.Map<String, String> nicks = new java.util.LinkedHashMap<String, String>();
 
     boolean dodgeEnabled = true;
@@ -222,6 +223,7 @@ final class Settings {
             return value instanceof Boolean && setCheckEnabled(name.substring(6), Boolean.TRUE.equals(value));
         }
         if ("tabMarks".equals(name) || "alertsChat".equals(name) || "alertSound".equals(name)
+                || "chatHovers".equals(name)
                 || "borderless".equals(name) || "dodgeEnabled".equals(name) || "dodgeBlacklist".equals(name)
                 || "dodgeFlagged".equals(name) || "dodgeTags".equals(name) || "updateCheck".equals(name)) {
             if (!(value instanceof Boolean)) {
@@ -234,6 +236,8 @@ final class Settings {
                 alertsChat = on;
             } else if ("alertSound".equals(name)) {
                 alertSound = on;
+            } else if ("chatHovers".equals(name)) {
+                chatHovers = on;
             } else if ("borderless".equals(name)) {
                 borderless = on;
             } else if ("dodgeEnabled".equals(name)) {
@@ -295,6 +299,7 @@ final class Settings {
         out.append("\"tabMarks\":").append(tabMarks);
         out.append(",\"alertsChat\":").append(alertsChat);
         out.append(",\"alertSound\":").append(alertSound);
+        out.append(",\"chatHovers\":").append(chatHovers);
         out.append(",\"borderless\":").append(borderless);
         out.append(",\"dodgeEnabled\":").append(dodgeEnabled);
         out.append(",\"dodgeFkdr\":").append(dodgeFkdr);
@@ -409,6 +414,7 @@ final class Settings {
             tabMarks = boolOf(map, "tabMarks", tabMarks);
             alertsChat = boolOf(map, "alertsChat", alertsChat);
             alertSound = boolOf(map, "alertSound", alertSound);
+            chatHovers = boolOf(map, "chatHovers", chatHovers);
             dodgeEnabled = boolOf(map, "dodgeEnabled", dodgeEnabled);
             dodgeFkdr = dblOf(map, "dodgeFkdr", dodgeFkdr);
             dodgeStars = intOf(map, "dodgeStars", dodgeStars);
@@ -486,6 +492,7 @@ final class Settings {
         line(out, "tabMarks", String.valueOf(tabMarks));
         line(out, "alertsChat", String.valueOf(alertsChat));
         line(out, "alertSound", String.valueOf(alertSound));
+        line(out, "chatHovers", String.valueOf(chatHovers));
         line(out, "dodgeEnabled", String.valueOf(dodgeEnabled));
         line(out, "dodgeFkdr", String.valueOf(dodgeFkdr));
         line(out, "dodgeStars", String.valueOf(dodgeStars));

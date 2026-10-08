@@ -69,11 +69,14 @@ final class Hud {
     private static final long POLL_MS = 100L;
     private static final AtomicBoolean REFRESH = new AtomicBoolean();
     private static final AtomicBoolean CLEAR = new AtomicBoolean();
+    private static final AtomicBoolean UPDATE = new AtomicBoolean();
     private static final AtomicInteger CMD_COUNTER = new AtomicInteger();
     private static final ConcurrentLinkedQueue<String> REPORTS = new ConcurrentLinkedQueue<String>();
     private static final ConcurrentLinkedQueue<Map<String, String>> KEYS = new ConcurrentLinkedQueue<Map<String, String>>();
     private static final ConcurrentLinkedQueue<Map<String, Object>> SETS = new ConcurrentLinkedQueue<Map<String, Object>>();
     private static final ConcurrentLinkedQueue<String[]> ACTIONS = new ConcurrentLinkedQueue<String[]>();
+    private static final ConcurrentLinkedQueue<String[]> PLUGINS = new ConcurrentLinkedQueue<String[]>();
+    private static volatile String pluginsJson = "[]";
     static final String[] ROW_ACTIONS = { "unblacklist", "friend", "unfriend" };
     private static File dir;
     private static Settings settings;
@@ -83,8 +86,10 @@ final class Hud {
     private static long reopenSeq;
     private static long refreshSeq;
     private static boolean hooked;
+    private static boolean holdSpawn;
     private static String sessionText = "";
-    private static String lastWritten;
+    private static volatile String notice = "";
+    private static volatile String lastWritten;
     private static int lastPlayers;
     private static List<Row> lastLobby = new ArrayList<Row>();
     private static List<Row> lastSaved = new ArrayList<Row>();
@@ -139,6 +144,29 @@ final class Hud {
         return CLEAR.getAndSet(false);
     }
 
+    static boolean takeUpdate() {
+        return UPDATE.getAndSet(false);
+    }
+
+    /** {id, "1"|"0"} from the overlay Plugins page. */
+    static String[] takePlugin() {
+        return PLUGINS.poll();
+    }
+
+    static void plugins(String json) {
+        pluginsJson = json == null || json.isEmpty() ? "[]" : json;
+        lastWritten = null;
+    }
+
+    static void notice(String text) {
+        notice = text == null ? "" : text;
+        lastWritten = null;
+    }
+
+    static String notice() {
+        return notice == null ? "" : notice;
+    }
+
     static String wdr(String name) {
         return "/wdr " + name + " cheating";
     }
@@ -188,8 +216,34 @@ final class Hud {
         return dir == null ? null : new File(dir, "config/safedetect-cmd");
     }
 
+    /** Stops the overlay so the jar isn't locked while an update replaces it. */
+    static void pauseOverlay() {
+        holdSpawn = true;
+        stopChild();
+    }
+
+    static void resumeOverlay() {
+        holdSpawn = false;
+        lastSpawn = 0L;
+        spawn(true);
+    }
+
+    private static void stopChild() {
+        if (child == null) {
+            return;
+        }
+        try {
+            child.destroy();
+            for (int i = 0; i < 20 && childIsAlive(); i++) {
+                Thread.sleep(50L);
+            }
+        } catch (Throwable ignored) {
+        }
+        child = null;
+    }
+
     private static void spawn(boolean force) {
-        if (dir == null || Boolean.getBoolean("safedetect.nogui")) {
+        if (holdSpawn || dir == null || Boolean.getBoolean("safedetect.nogui")) {
             return;
         }
         if (child != null && childIsAlive()) {
@@ -201,7 +255,7 @@ final class Hud {
         }
         lastSpawn = now;
         try {
-            File jar = new File(Hud.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            File jar = overlayJar();
             File java = new File(System.getProperty("java.home"), "bin/javaw.exe");
             if (!java.isFile()) {
                 java = new File(System.getProperty("java.home"), "bin/java");
@@ -230,6 +284,15 @@ final class Hud {
         }
     }
 
+    private static File overlayJar() throws java.net.URISyntaxException {
+        File loc = new File(Hud.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        if (!loc.isFile()) {
+            return loc;
+        }
+        File pending = new File(loc.getParentFile(), Updater.PENDING_NAME);
+        return pending.isFile() && pending.length() > 1024L ? pending : loc;
+    }
+
     private static boolean childIsAlive() {
         try {
             child.exitValue();
@@ -252,6 +315,7 @@ final class Hud {
         StringBuilder out = new StringBuilder("{\n");
         out.append("  \"players\": ").append(players).append(",\n");
         out.append("  \"session\": ").append(Json.quote(sessionText)).append(",\n");
+        out.append("  \"notice\": ").append(Json.quote(notice == null ? "" : notice)).append(",\n");
         out.append("  \"reopen\": ").append(reopenSeq).append(",\n");
         out.append("  \"refresh\": ").append(refreshSeq).append(",\n");
         Settings s = settings;
@@ -266,6 +330,7 @@ final class Hud {
         writeRows(out, lobby);
         out.append(",\n  \"saved\": ");
         writeRows(out, saved);
+        out.append(",\n  \"plugins\": ").append(pluginsJson == null || pluginsJson.isEmpty() ? "[]" : pluginsJson);
         out.append("\n}\n");
         String text = out.toString();
         if (text.equals(lastWritten)) {
@@ -350,6 +415,9 @@ final class Hud {
         if (Boolean.TRUE.equals(map.get("clear"))) {
             CLEAR.set(true);
         }
+        if (Boolean.TRUE.equals(map.get("update"))) {
+            UPDATE.set(true);
+        }
         String[][] legacy = { { "tab", "tabMarks" }, { "chat", "alertsChat" }, { "sound", "alertSound" } };
         for (String[] pair : legacy) {
             if (map.get(pair[0]) instanceof Boolean) {
@@ -386,6 +454,13 @@ final class Hud {
                 ACTIONS.offer(new String[] { action, ((String) map.get(action)).trim() });
             }
         }
+        if (map.get("plugin") instanceof String) {
+            String id = ((String) map.get("plugin")).trim();
+            if (!id.isEmpty()) {
+                boolean on = !Boolean.FALSE.equals(map.get("on"));
+                PLUGINS.offer(new String[] { id, on ? "1" : "0" });
+            }
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -403,6 +478,7 @@ final class Hud {
             Snapshot snap = new Snapshot();
             snap.players = map.get("players") instanceof Number ? ((Number) map.get("players")).intValue() : 0;
             snap.session = map.get("session") instanceof String ? (String) map.get("session") : "";
+            snap.notice = map.get("notice") instanceof String ? (String) map.get("notice") : "";
             snap.reopen = lng(map, "reopen");
             snap.refresh = lng(map, "refresh");
             if (map.get("options") instanceof Map) {
@@ -415,6 +491,7 @@ final class Hud {
             }
             snap.lobby = readRows(map.get("lobby"));
             snap.saved = readRows(map.get("saved"));
+            snap.plugins = readPlugins(map.get("plugins"));
             return snap;
         } catch (Throwable ignored) {
             return null;
@@ -479,6 +556,10 @@ final class Hud {
         writeCmd("{\"clear\":true}");
     }
 
+    static void writeUpdate() {
+        writeCmd("{\"update\":true}");
+    }
+
     /** Values are sent as typed; an empty string clears that key. */
     static void writeKeys(Map<String, String> keys) {
         if (keys == null || keys.isEmpty()) {
@@ -505,6 +586,12 @@ final class Hud {
         }
     }
 
+    static void writePlugin(String id, boolean on) {
+        if (id != null && !id.isEmpty()) {
+            writeCmd("{\"plugin\":" + Json.quote(id) + ",\"on\":" + on + "}");
+        }
+    }
+
     private static void writeCmd(String json) {
         File folder = cmdDir();
         if (folder == null) {
@@ -518,11 +605,51 @@ final class Hud {
     static final class Snapshot {
         int players;
         String session = "";
+        String notice = "";
         long reopen;
         long refresh;
         final Map<String, Object> options = new LinkedHashMap<String, Object>();
         final Map<String, Boolean> keysSet = new LinkedHashMap<String, Boolean>();
         List<Row> lobby = new ArrayList<Row>();
         List<Row> saved = new ArrayList<Row>();
+        List<PluginCard> plugins = new ArrayList<PluginCard>();
+    }
+
+    static final class PluginCard {
+        String id = "";
+        String name = "";
+        String author = "";
+        String version = "";
+        String blurb = "";
+        String needs = "";
+        String commands = "";
+        boolean on;
+    }
+
+    @SuppressWarnings("unchecked")
+    static List<PluginCard> readPlugins(Object value) {
+        List<PluginCard> cards = new ArrayList<PluginCard>();
+        if (!(value instanceof List)) {
+            return cards;
+        }
+        for (Object entry : (List<Object>) value) {
+            if (!(entry instanceof Map)) {
+                continue;
+            }
+            Map<String, Object> map = (Map<String, Object>) entry;
+            PluginCard card = new PluginCard();
+            card.id = str(map, "id");
+            card.name = str(map, "name");
+            card.author = str(map, "author");
+            card.version = str(map, "version");
+            card.blurb = str(map, "blurb");
+            card.needs = str(map, "needs");
+            card.commands = str(map, "commands");
+            card.on = Boolean.TRUE.equals(map.get("on"));
+            if (!card.id.isEmpty()) {
+                cards.add(card);
+            }
+        }
+        return cards;
     }
 }

@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -88,6 +89,8 @@ final class Detector {
     private Encounters encounters;
     private File root;
     private final Updater updater = new Updater();
+    private final PluginHost plugins = new PluginHost();
+    private Object chatSelf;
     private long worldSeq;
     private int sessionGames;
     private int sessionWins;
@@ -127,6 +130,8 @@ final class Detector {
             return;
         }
         inWorld = true;
+        chatSelf = self;
+        plugins.bind(mc, self);
         if (store == null) {
             File dir = game.dataDir(mc);
             root = dir != null ? dir : new File(".");
@@ -139,6 +144,22 @@ final class Detector {
             FlagLog.open(root);
             Hud.open(root);
             Hud.bind(settings);
+            plugins.open(root, game, settings, new PluginHost.ChatSink() {
+                @Override
+                public void line(String text) {
+                    if (chatSelf != null) {
+                        Detector.this.chat(chatSelf, text);
+                    }
+                }
+
+                @Override
+                public void ping() {
+                    if (chatSelf != null) {
+                        Detector.this.ping(chatSelf);
+                    }
+                }
+            });
+            Hud.plugins(plugins.catalogJson());
             if (settings.discordAppId != null && !settings.discordAppId.isEmpty()) {
                 discord.setAppId(settings.discordAppId);
             }
@@ -177,6 +198,7 @@ final class Detector {
             dodgeWarned.clear();
             flaggedHere.clear();
             worldSeq++;
+            plugins.world();
         }
         tick += elapsed;
         if (!greeted) {
@@ -191,13 +213,12 @@ final class Detector {
             if (settings != null && settings.updateCheck && version != null
                     && Updater.due(settings.lastUpdateCheck, now)) {
                 settings.setLastUpdateCheck(now);
-                updater.start(version);
+                updater.request(version, false);
             }
         }
-        String newer = updater.take();
-        if (newer != null) {
-            chat(self, "\u00a77SafeDetect \u00a7f" + newer + "\u00a77 is out \u00a78(you have " + Updater.currentVersion()
-                    + "). Click to copy the download link.", Updater.RELEASES);
+        String updateChat = updater.takeChat();
+        if (updateChat != null) {
+            chat(self, updateChat, Updater.RELEASES);
         }
 
         int selfColor = 0;
@@ -290,6 +311,7 @@ final class Detector {
             }
         }
         tab(tabs);
+        plugins.tab(tabs);
         lobbyWindow(self, tabs, selfId);
     }
 
@@ -618,6 +640,7 @@ final class Detector {
             chat(self, "\u00a77/sd check <name> \u00a78one player, evidence and encounters");
             chat(self, "\u00a77/sd clear confirm \u00a78delete every saved player");
             chat(self, "\u00a77/sd gui \u00a78reopen the lobby window \u00a78(gear button: themes, columns, alerts)");
+            chat(self, "\u00a77/sd update \u00a78download the latest jar (or press Update on the overlay)");
             chat(self, "\u00a77/sd checks [code on|off] \u00a78list or toggle checks");
             chat(self, "\u00a77/sd dodge [on|off] \u00a78dodge warnings in lobbies");
             chat(self, "\u00a77/sd export \u00a78flags and encounters to CSV");
@@ -633,11 +656,17 @@ final class Detector {
             chat(self, "\u00a77/sd discord <app-id> \u00a78session presence");
             chat(self, "\u00a77/sd bl <add|remove|list|import> \u00a78local blacklist");
             chat(self, "\u00a77/sd aurora <key> \u00a78number denick");
+            chat(self, "\u00a77/sd plugins [on|off <id>] \u00a78marketplace add-ons");
+            chat(self, "\u00a77/sd play 1s|2s|3s|4s \u00a78queue Bedwars (QuickPlay plugin)");
             return;
         }
         if ("gui".equals(sub) || "window".equals(sub) || "panel".equals(sub)) {
             Hud.reopen();
             chat(self, "\u00a77Lobby window opened.");
+            return;
+        }
+        if ("update".equals(sub) || "upgrade".equals(sub)) {
+            updater.request(Updater.currentVersion(), true);
             return;
         }
         if ("list".equals(sub)) {
@@ -864,6 +893,10 @@ final class Detector {
             Log.info("Cleared " + n + " saved players.");
             return;
         }
+        if (plugins.command(parts)) {
+            Hud.plugins(plugins.catalogJson());
+            return;
+        }
         chat(self, "\u00a77Unknown. Try \u00a7f/sd help\u00a77.");
     }
 
@@ -1034,6 +1067,96 @@ final class Detector {
         return ids;
     }
 
+    /** Hover on names in received chat: SD flags, Urchin tags, local blacklist. Display only. */
+    private void decorateChatHovers(Object[] lines, int count) {
+        if (lines == null || count <= 0 || store == null) {
+            return;
+        }
+        if (settings != null && !settings.chatHovers) {
+            return;
+        }
+        Map<String, String> names = flaggedChatNames();
+        if (names.isEmpty()) {
+            return;
+        }
+        int n = Math.min(count, lines.length);
+        List<Object> pieces = new ArrayList<Object>();
+        for (int i = 0; i < n; i++) {
+            Object root = game.chatLineComponent(lines[i]);
+            if (root == null) {
+                continue;
+            }
+            pieces.clear();
+            game.walkChat(root, pieces);
+            boolean tagged = false;
+            for (int p = 0; p < pieces.size(); p++) {
+                tagged |= applyChatHover(pieces.get(p), names, false);
+            }
+            if (!tagged) {
+                applyChatHover(root, names, true);
+            }
+        }
+    }
+
+    private boolean applyChatHover(Object piece, Map<String, String> names, boolean wholeLine) {
+        String text;
+        try {
+            text = wholeLine ? game.unformatted(piece) : game.chatOwnText(piece);
+        } catch (Throwable thrown) {
+            return false;
+        }
+        String name = ChatHover.matchName(text, names);
+        if (name == null) {
+            return false;
+        }
+        ChatHover.Info info = chatHoverInfo(name);
+        String tip = ChatHover.build(name, info);
+        if (tip == null) {
+            return false;
+        }
+        game.setHoverText(piece, tip);
+        String copy = Hud.wdr(name);
+        game.setClickSuggest(piece, copy);
+        copyTargets.add(copy);
+        return true;
+    }
+
+    private ChatHover.Info chatHoverInfo(String name) {
+        ChatHover.Info info = new ChatHover.Info();
+        info.record = store.get(null, name);
+        info.blacklisted = blacklist != null && blacklist.contains(name);
+        Intel intel = intelFor(null, name);
+        if (intel != null) {
+            info.extra = intel.extra;
+            info.sniper = intel.sniper;
+            info.nicked = intel.nicked;
+            info.fkdr = intel.fkdr;
+            info.stars = intel.stars;
+        }
+        return info;
+    }
+
+    private Map<String, String> flaggedChatNames() {
+        Map<String, String> names = new LinkedHashMap<String, String>();
+        for (FlagStore.Record record : store.records()) {
+            if (record.name != null && !record.name.isEmpty() && !record.flags.isEmpty()) {
+                names.put(record.name.toLowerCase(Locale.ROOT), record.name);
+            }
+        }
+        if (blacklist != null) {
+            for (String name : blacklist.names) {
+                names.put(name, name);
+            }
+        }
+        for (Map.Entry<String, Intel> entry : intelByName.entrySet()) {
+            Intel intel = entry.getValue();
+            if (intel != null && ((intel.extra != null && !intel.extra.isEmpty()) || intel.nicked || intel.sniper >= 60)) {
+                names.put(entry.getKey(), entry.getKey());
+            }
+        }
+        return names;
+    }
+
     private boolean skipped(String name) {
         if (name == null) {
             return false;
@@ -1044,9 +1167,15 @@ final class Detector {
     private void incoming(Object mc, Object self) {
         try {
             Object[] lines = game.chatLines(mc);
-            for (int i = freshChat(lines) - 1; i >= 0; i--) {
-                lobbyChat.line(game.chatLineText(lines[i]));
+            int fresh = freshChat(lines);
+            for (int i = fresh - 1; i >= 0; i--) {
+                String raw = game.chatLineText(lines[i]);
+                lobbyChat.line(raw);
+                if (raw != null) {
+                    plugins.chatLine(raw.replaceAll("\u00a7.", "").trim());
+                }
             }
+            decorateChatHovers(lines, tick % 20L == 0L ? lines.length : fresh);
             seenChat = Arrays.copyOf(lines, Math.min(CHAT_MEMORY, lines.length));
             if (lobbyChat.won) {
                 lobbyChat.won = false;
@@ -1356,6 +1485,17 @@ final class Detector {
             Hud.bump();
             dirty = true;
         }
+        if (Hud.takeUpdate()) {
+            updater.request(Updater.currentVersion(), true);
+        }
+        String[] pluginToggle;
+        while ((pluginToggle = Hud.takePlugin()) != null) {
+            boolean on = pluginToggle.length > 1 && "1".equals(pluginToggle[1]);
+            plugins.setEnabled(pluginToggle[0], on);
+            Hud.plugins(plugins.catalogJson());
+            chat(self, "\u00a77" + pluginToggle[0] + (on ? " \u00a7aon" : " \u00a7coff") + "\u00a77.");
+            dirty = true;
+        }
         if (blacklist == null) {
             return dirty;
         }
@@ -1375,6 +1515,7 @@ final class Detector {
         OPTION_LABELS.put("tabMarks", "Tab marks");
         OPTION_LABELS.put("alertsChat", "Chat alerts");
         OPTION_LABELS.put("alertSound", "Alert sound");
+        OPTION_LABELS.put("chatHovers", "Chat hovers");
         OPTION_LABELS.put("dodgeEnabled", "Dodge warnings");
         OPTION_LABELS.put("updateCheck", "Update check");
     }
@@ -1711,10 +1852,7 @@ final class Detector {
         if (!game.canUseTab() || store == null) {
             return;
         }
-        if (settings != null && !settings.tabMarks) {
-            restoreTab(tabs);
-            return;
-        }
+        boolean showMarks = settings == null || settings.tabMarks;
         try {
             Set<UUID> seen = new HashSet<UUID>();
             for (Object info : tabs) {
@@ -1728,23 +1866,26 @@ final class Detector {
                 }
                 seen.add(id);
                 Object current = game.tabDisplayName(info);
-                if (current != tabApplied.get(id) && !ourTab(current)) {
+                if (current != tabApplied.get(id) && !ourTab(id, current)) {
                     tabOriginal.put(id, current);
                 }
-                String tags = store.brackets(store.get(id, name));
-                if (tags.isEmpty()) {
-                    if (tabApplied.containsKey(id) || ourTab(current)) {
+                String tags = showMarks ? store.brackets(store.get(id, name)) : "";
+                String extra = plugins.suffix(id);
+                if (tags.isEmpty() && extra.isEmpty()) {
+                    if (tabApplied.containsKey(id) || ourTab(id, current)) {
                         game.setTabDisplayName(info, tabOriginal.get(id));
                         tabApplied.remove(id);
                         tabLabels.remove(id);
                     }
                     continue;
                 }
-                String label = (name != null ? name : id.toString()) + TAB_MARK + tags;
-                if (current != null && current == tabApplied.get(id) && label.equals(tabLabels.get(id))) {
+                String ign = name != null ? name : id.toString();
+                String mark = tags.isEmpty() ? "\u00a7r " : TAB_MARK;
+                Object shown = game.markedTabName(info, ign, mark, tags + extra, tabOriginal.get(id));
+                String label = shown == null ? ign + mark + tags + extra : game.unformatted(shown);
+                if (current != null && current == tabApplied.get(id) && label != null && label.equals(tabLabels.get(id))) {
                     continue;
                 }
-                Object shown = game.textComponent(label);
                 game.setTabDisplayName(info, shown);
                 tabApplied.put(id, shown);
                 tabLabels.put(id, label);
@@ -1779,13 +1920,17 @@ final class Detector {
         tabLabels.clear();
     }
 
-    private boolean ourTab(Object component) {
+    private boolean ourTab(UUID id, Object component) {
         if (component == null) {
             return false;
         }
+        if (component == tabApplied.get(id)) {
+            return true;
+        }
         try {
             String text = game.unformatted(component);
-            return text != null && text.contains(TAB_MARK);
+            String label = tabLabels.get(id);
+            return text != null && (text.contains(TAB_MARK) || (label != null && text.equals(label)));
         } catch (Throwable thrown) {
             return false;
         }

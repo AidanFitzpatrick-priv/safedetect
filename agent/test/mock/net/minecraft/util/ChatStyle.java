@@ -17,6 +17,10 @@ public class ChatStyle {
         return this;
     }
 
+    public HoverEvent getChatHoverEvent() {
+        return hover;
+    }
+
     public ChatStyle setChatHoverEvent(HoverEvent event) {
         hover = event;
         return this;

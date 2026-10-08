@@ -59,13 +59,14 @@ Keep Lunar in borderless fullscreen.
 
 A red banner lists lobby players worth dodging. Flagged players are pinned to the top by default, and rows get a stripe in their team colour.
 
-The settings panel has five pages:
+The settings panel has six pages:
 
 - **Appearance:** theme (Dark, Light, Classic Hypixel, High contrast), accent colour, font size, row density, opacity, mini-mode filter, group by team, pin flagged first.
 - **Columns:** pick, order and reset columns (level, name, team, flags, winstreak, FKDR, WLR, finals, wins, sniper, seen, last flag).
-- **Alerts:** tab marks, chat alerts, sound, borderless, update check, and the dodge rules and thresholds.
+- **Alerts:** tab marks, chat alerts, sound, borderless, daily update check, **Check for updates** (downloads the latest jar in game), and the dodge rules and thresholds.
 - **Checks:** turn single checks on or off, read what each SD and Urchin tag means, pick a sensitivity (lenient, normal, strict), and tune reach, aura angle, CPS and speed limits.
 - **Keys:** API keys.
+- **Plugins:** bundled marketplace add-ons, plus drop-in jars.
 
 Overlay layout is saved in `config/safedetect-overlay.json`; game options live in `config/safedetect-settings.json`.
 
@@ -89,6 +90,7 @@ SafeDetect also counts how often you have been in a game with each player (once 
 /sd check <name>
 /sd clear confirm
 /sd gui
+/sd update                 download the latest jar while in game
 /sd friend <name>
 /sd unfriend <name>
 /sd key <hypixel-api-key>
@@ -99,11 +101,21 @@ SafeDetect also counts how often you have been in a game with each player (once 
 /sd dodge [on|off]         dodge warning status, or turn them on/off
 /sd export                 write config/safedetect-export-<date>.csv and safedetect-encounters-<date>.csv
 /sd reload                 re-read settings, blacklist, flags and encounters after editing them by hand
+/sd plugins [on|off <id>]  bundled and drop-in add-ons
+/sd play 1s|2s|3s|4s       queue Bedwars (enable QuickPlay)
 ```
 
 Optional: `/sd urchin`, `/sd aurora`, `/sd sniper`, `/sd discord`.
 
-Once a day SafeDetect checks GitHub for a newer release and prints a clickable line if there is one. Turn it off under **Alerts** → Update check.
+## Plugins
+
+Settings → **Plugins** is the marketplace. Turn bundled add-ons on or off there, or with `/sd plugins on <id>`. Commands for an add-on are always `/sd <id> ...` (for example `/sd nickfind setkey`, `/sd duel q classic`, `/sd height lighthouse`).
+
+Drop a jar in `%APPDATA%\.minecraft\config\safedetect-plugins\` to share or install extra plugins. The jar manifest needs `Plugin-Class: fully.qualified.Name`, and that class must have a public no-arg constructor and implement `com.safedetect.agent.Plugin` (compile against `safedetect-agent.jar`). Jars run with the same privileges as SafeDetect.
+
+Bundled ids: `nickfind` (Bedlify nicks), `duel` (DuelDesk), `partywarn`, `split`, `snipe`, `autogg`, `play`, `pdodge`, `meow`, `height`, `ses`, `tags`, `statcall`.
+
+Once a day SafeDetect checks GitHub for a newer release. Press **Update** on the overlay (or **Alerts → Check for updates**, or `/sd update`) to download it while you are in game: the overlay restarts on the new jar; fully restart Lunar so the checks load it. Turn the daily hint off under **Alerts** → Update check.
 
 ## Credits
 

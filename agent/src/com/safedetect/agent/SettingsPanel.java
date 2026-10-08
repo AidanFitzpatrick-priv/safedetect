@@ -49,13 +49,14 @@ import java.util.Map;
  */
 final class SettingsPanel extends JPanel {
     private static final long serialVersionUID = 1L;
-    static final String[] CARDS = { "Appearance", "Columns", "Alerts", "Checks", "Keys" };
+    static final String[] CARDS = { "Appearance", "Columns", "Alerts", "Checks", "Keys", "Plugins" };
     private static final String[] SUBTITLES = {
             "Theme, colours and how the list is laid out.",
             "Pick which stats show in the lobby list and in what order.",
-            "What happens in game when someone is flagged or worth dodging.",
+            "What happens in game when someone is flagged or worth dodging. Update installs a new jar.",
             "What each flag means, plus Urchin tags. Turn checks on or off here.",
             "Keys go straight to the game and are never shown again.",
+            "Enable bundled add-ons or drop a jar into config/safedetect-plugins.",
     };
     static final String[][] KEY_FIELDS = {
             { "hypixel", "Hypixel API key" },
@@ -98,6 +99,8 @@ final class SettingsPanel extends JPanel {
     private final List<Binding> bindings = new ArrayList<Binding>();
     private final List<Ui.Pill> keyStates = new ArrayList<Ui.Pill>();
     private JPanel columnList;
+    private JPanel pluginList;
+    private String pluginKey = "";
     private String card;
     private boolean loading;
 
@@ -113,6 +116,7 @@ final class SettingsPanel extends JPanel {
         deck.add(scrolled(alerts()), CARDS[2]);
         deck.add(scrolled(checks()), CARDS[3]);
         deck.add(scrolled(keys()), CARDS[4]);
+        deck.add(scrolled(plugins()), CARDS[5]);
         add(deck, BorderLayout.CENTER);
         show(startCard);
         refresh();
@@ -156,6 +160,7 @@ final class SettingsPanel extends JPanel {
             for (int i = 0; i < keyStates.size() && i < KEY_FIELDS.length; i++) {
                 paintKeyState(keyStates.get(i), Overlay.keySet(KEY_FIELDS[i][0]));
             }
+            fillPlugins();
         } finally {
             loading = false;
         }
@@ -635,10 +640,44 @@ final class SettingsPanel extends JPanel {
         Form form = new Form(2);
         form.section("In game");
         form.row("Tab marks", "Show flags next to names in the tab list", gameToggle("tabMarks"));
+        form.row("Chat hovers", "Flags from every source when you hover a name in chat", gameToggle("chatHovers"));
         form.row("Chat alerts", "A chat line when someone is flagged", gameToggle("alertsChat"));
         form.row("Alert sound", null, gameToggle("alertSound"));
         form.row("Stay on top", "Keep the overlay above borderless Minecraft", gameToggle("borderless"));
         form.row("Update check", "Look for a new release once a day", gameToggle("updateCheck"));
+        form.section("Install");
+        JButton update = Ui.button(theme, "Check for updates", Ui.PRIMARY);
+        final JLabel updateStatus = Ui.label(theme,
+                Updater.currentVersion() == null ? "Downloads the latest jar and restarts this window."
+                        : "This window is " + Updater.currentVersion()
+                                + ". Overlay restarts now; restart Lunar for checks.",
+                theme.small, theme.muted);
+        update.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                showStatus(updateStatus, "Checking GitHub\u2026", theme.muted);
+                Hud.writeUpdate();
+            }
+        });
+        JPanel install = new JPanel(new BorderLayout(12, 0));
+        install.setOpaque(false);
+        install.add(update, BorderLayout.WEST);
+        install.add(updateStatus, BorderLayout.CENTER);
+        form.full(install);
+        bindings.add(new Binding() {
+            @Override
+            public String name() {
+                return "updateNotice";
+            }
+
+            @Override
+            public void load() {
+                String text = Overlay.notice();
+                if (text != null && !text.isEmpty()) {
+                    showStatus(updateStatus, text, theme.fg);
+                }
+            }
+        });
         form.section("Dodge warnings");
         form.row("Dodge warnings", "One chat line, sound and title per player per lobby", gameToggle("dodgeEnabled"));
         form.row("Blacklisted players", null, gameToggle("dodgeBlacklist"));
@@ -789,6 +828,89 @@ final class SettingsPanel extends JPanel {
         buttons.add(clear);
         status[0] = form.after(buttons, "Paste a key and press Enter or Save keys. Blank fields are left unchanged.");
         return form.page;
+    }
+
+    private JPanel plugins() {
+        Form form = new Form(5);
+        form.section("Marketplace");
+        pluginList = new JPanel();
+        pluginList.setLayout(new BoxLayout(pluginList, BoxLayout.Y_AXIS));
+        pluginList.setOpaque(false);
+        form.full(pluginList);
+        form.section("Share your own");
+        form.gloss("Drop-in jars",
+                "Put a jar in config/safedetect-plugins with Plugin-Class in the manifest. It must implement com.safedetect.agent.Plugin. Jars run with the same access as SafeDetect.");
+        form.gloss("Commands", "Every add-on lives under /sd. Toggle with /sd plugins on|off <id>.");
+        fillPlugins();
+        return form.page;
+    }
+
+    private void fillPlugins() {
+        if (pluginList == null) {
+            return;
+        }
+        List<Hud.PluginCard> cards = Overlay.plugins();
+        StringBuilder key = new StringBuilder();
+        for (Hud.PluginCard each : cards) {
+            key.append(each.id).append(each.on ? '1' : '0').append('|');
+        }
+        String next = key.toString();
+        if (next.equals(pluginKey) && pluginList.getComponentCount() > 0) {
+            return;
+        }
+        pluginKey = next;
+        pluginList.removeAll();
+        if (cards.isEmpty()) {
+            pluginList.add(Ui.label(theme, "Join a world so the game can list plugins.", theme.small, theme.muted));
+        }
+        for (int i = 0; i < cards.size(); i++) {
+            pluginList.add(pluginCard(cards.get(i), i > 0));
+        }
+        pluginList.revalidate();
+        pluginList.repaint();
+    }
+
+    private JComponent pluginCard(final Hud.PluginCard plugin, boolean line) {
+        JPanel card = new JPanel(new BorderLayout(12, 0));
+        card.setOpaque(false);
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(line ? 1 : 0, 0, 0, 0, theme.rowLine),
+                BorderFactory.createEmptyBorder(10, 0, 10, 0)));
+        JPanel labels = new JPanel();
+        labels.setLayout(new BoxLayout(labels, BoxLayout.Y_AXIS));
+        labels.setOpaque(false);
+        JLabel title = Ui.label(theme, plugin.name + "  " + plugin.version, theme.small, theme.fg);
+        JLabel meta = Ui.label(theme, plugin.author + " · /sd " + plugin.id, theme.caption, theme.muted);
+        JLabel blurb = Ui.label(theme, plugin.blurb, theme.small.deriveFont(theme.small.getSize2D() - 1f), theme.muted);
+        labels.add(title);
+        labels.add(Box.createVerticalStrut(2));
+        labels.add(meta);
+        labels.add(Box.createVerticalStrut(4));
+        labels.add(blurb);
+        if (plugin.needs != null && !plugin.needs.isEmpty()) {
+            labels.add(Box.createVerticalStrut(2));
+            labels.add(Ui.label(theme, plugin.needs, theme.caption, theme.warn));
+        }
+        if (plugin.commands != null && !plugin.commands.isEmpty()) {
+            labels.add(Ui.label(theme, plugin.commands, theme.caption, theme.muted));
+        }
+        card.add(labels, BorderLayout.CENTER);
+        final JButton toggle = Ui.button(theme, plugin.on ? "On" : "Off", plugin.on ? Ui.PRIMARY : Ui.GHOST);
+        toggle.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                Overlay.setPlugin(plugin.id, !plugin.on);
+                plugin.on = !plugin.on;
+                pluginKey = "";
+                fillPlugins();
+            }
+        });
+        JPanel control = new JPanel(new GridBagLayout());
+        control.setOpaque(false);
+        control.add(toggle);
+        card.add(control, BorderLayout.EAST);
+        return card;
     }
 
     private static void showStatus(JLabel label, String text, Color color) {

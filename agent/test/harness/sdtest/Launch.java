@@ -76,6 +76,8 @@ public final class Launch {
         ok &= expect(all, "Sloppy failed", false);
         ok &= expect(all, "/sd list [page]", true);
         ok &= expect(all, "/sd gui", true);
+        ok &= expect(all, "/sd update", true);
+        ok &= expect(all, "/sd plugins", true);
         ok &= expect(all, "/sd friend", true);
         ok &= expect(all, "trnsmt", true);
         ok &= expect(all, "UnitTest", true);

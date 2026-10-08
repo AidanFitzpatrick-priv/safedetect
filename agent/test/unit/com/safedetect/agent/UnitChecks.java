@@ -62,6 +62,8 @@ public final class UnitChecks {
             export();
             themesAndPrefs(dir);
             updater();
+            chatHover();
+            plugins(dir);
         } catch (Exception thrown) {
             thrown.printStackTrace();
             check("new unit checks ran", false);
@@ -183,13 +185,107 @@ public final class UnitChecks {
         check("prefs: accepts bounds-only file", bounds.x == 5 && bounds.w == 700 && Theme.DARK.equals(bounds.theme));
     }
 
-    private static void updater() {
+    private static void updater() throws Exception {
         check("update: newer patch", Updater.newer("v1.0.1", "1.0.0"));
         check("update: same version", !Updater.newer("v1.0.0", "1.0.0"));
         check("update: older", !Updater.newer("0.9", "1.0.0"));
         check("update: 1.10 beats 1.9", Updater.newer("1.10", "1.9"));
         check("update: junk tag", !Updater.newer("nightly", "1.0.0"));
         check("update: daily", !Updater.due(1000L, 1000L + 60000L) && Updater.due(0L, Updater.INTERVAL_MS));
+
+        Updater.Release rel = Updater.parseRelease(
+                "{\"tag_name\":\"v1.0.1\",\"assets\":["
+                        + "{\"name\":\"SafeDetect-v1.0.1.zip\",\"browser_download_url\":\"https://x/z\"},"
+                        + "{\"name\":\"safedetect-agent.jar\",\"browser_download_url\":\"https://x/safedetect-agent.jar\"}]}");
+        check("update: parses jar asset", rel != null && "v1.0.1".equals(rel.tag)
+                && "https://x/safedetect-agent.jar".equals(rel.jarUrl));
+        Updater.Release fallback = Updater.parseRelease("{\"tag_name\":\"v2.0.0\",\"assets\":[]}");
+        check("update: fallback download url",
+                fallback != null && fallback.jarUrl != null && fallback.jarUrl.contains("/v2.0.0/safedetect-agent.jar"));
+        check("update: junk json", Updater.parseRelease("{") == null);
+
+        File dir = Files.createTempDirectory("sdupd").toFile();
+        File jar = new File(dir, "ok.jar");
+        writeManifestJar(jar, "SafeDetect Agent", "1.0.1");
+        check("update: safedetect jar", Updater.isSafeDetectJar(jar));
+        File other = new File(dir, "other.jar");
+        writeManifestJar(other, "Something Else", "1.0.0");
+        check("update: other jar rejected", !Updater.isSafeDetectJar(other));
+
+        File dest = new File(dir, "safedetect-agent.jar");
+        File pending = new File(dir, "safedetect-agent.jar.new");
+        Files.copy(jar.toPath(), pending.toPath());
+        check("update: apply pending", Updater.applyPending(pending, dest) && dest.isFile() && !pending.exists());
+
+        File dest2 = new File(dir, "live.jar");
+        File pending2 = new File(dir, "next.jar");
+        Files.copy(other.toPath(), dest2.toPath());
+        Files.copy(jar.toPath(), pending2.toPath());
+        check("update: replace installed",
+                Updater.replaceInstalled(pending2, dest2) && dest2.isFile() && Updater.isSafeDetectJar(dest2));
+        check("update: apply bat names the pending jar", Updater.applyBatText().contains("safedetect-agent.jar.new"));
+    }
+
+    private static void writeManifestJar(File file, String title, String version) throws Exception {
+        java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(file));
+        zip.putNextEntry(new java.util.zip.ZipEntry("META-INF/MANIFEST.MF"));
+        String mf = "Manifest-Version: 1.0\nImplementation-Title: " + title + "\nImplementation-Version: " + version
+                + "\n";
+        zip.write(mf.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        zip.closeEntry();
+        zip.close();
+    }
+
+    private static void chatHover() {
+        java.util.Map<String, String> names = new java.util.HashMap<String, String>();
+        names.put("sopira", "Sopira");
+        check("hover: name after rank", "Sopira".equals(ChatHover.matchName("[MVP+] Sopira: hi", names)));
+        check("hover: ignores other words", ChatHover.matchName("hello there", names) == null);
+
+        FlagStore.Record record = new FlagStore.Record();
+        record.flags.add("AB");
+        record.evidence.put("AB", "swung while blocking 11 ticks");
+        record.counts.put("AB", Integer.valueOf(20));
+        record.lastCheckAt = System.currentTimeMillis() - 4L * 30L * 86400L * 1000L;
+        ChatHover.Info info = new ChatHover.Info();
+        info.record = record;
+        info.extra = "[U:Sniper]";
+        info.blacklisted = true;
+        String tip = ChatHover.build("Sopira", info);
+        check("hover: titled", tip != null && ChatHover.ours(tip));
+        check("hover: safedetect", tip.contains("SafeDetect") && tip.contains("AutoBlock") && tip.contains("[AB]"));
+        check("hover: urchin", tip.contains("Urchin") && tip.contains("Sniper"));
+        check("hover: blacklist", tip.contains("Blacklist") && tip.contains("[BL]"));
+        check("hover: empty", ChatHover.build("x", new ChatHover.Info()) == null);
+        long now = 1_000_000_000_000L;
+        check("hover: months ago", ChatHover.ago(now - 40L * 86400L * 1000L, now).contains("month"));
+    }
+
+    private static void plugins(File dir) {
+        check("nickfind: version-1 uuid is nicked",
+                NickFindPlugin.nicked(java.util.UUID.fromString("11111111-1111-1111-1111-111111111111")));
+        check("nickfind: version-4 uuid is real", !NickFindPlugin.nicked(java.util.UUID.randomUUID()));
+        check("height: lighthouse", "86".equals(PluginPack.HeightCallPlugin.lookup("Lighthouse")));
+        check("height: unknown", PluginPack.HeightCallPlugin.lookup("notamap") == null);
+
+        PluginHost host = new PluginHost();
+        File root = new File(dir, "plug");
+        new File(root, "config").mkdirs();
+        host.open(root, null, null, null);
+        String catalog = host.catalogJson();
+        check("plugins: catalog has nickfind", catalog.contains("\"id\":\"nickfind\""));
+        check("plugins: catalog has play", catalog.contains("\"id\":\"play\""));
+        check("plugins: play on by default", host.enabled("play"));
+        check("plugins: nickfind off by default", !host.enabled("nickfind"));
+        host.setEnabled("nickfind", true);
+        check("plugins: can enable nickfind", host.enabled("nickfind"));
+        Object parsed = Json.parse(catalog);
+        check("plugins: catalog is JSON array", parsed instanceof java.util.List);
+        @SuppressWarnings("unchecked")
+        java.util.List<Object> list = (java.util.List<Object>) parsed;
+        check("plugins: at least 10 bundled", list.size() >= 10);
+        java.util.List<Hud.PluginCard> cards = Hud.readPlugins(parsed);
+        check("plugins: card has id", !cards.isEmpty() && cards.get(0).id != null && !cards.get(0).id.isEmpty());
     }
 
     private static void check(String what, boolean pass) {

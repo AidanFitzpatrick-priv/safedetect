@@ -4,4 +4,4 @@ Agent-Class: com.safedetect.agent.Agent
 Can-Redefine-Classes: false
 Can-Retransform-Classes: false
 Implementation-Title: SafeDetect Agent
-Implementation-Version: 1.0.0
+Implementation-Version: 1.1.0

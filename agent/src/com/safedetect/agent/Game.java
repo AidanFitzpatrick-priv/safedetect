@@ -101,6 +101,9 @@ final class Game {
     private Constructor<?> chatStyleCtor;
     private Method setChatClickEvent;
     private Method setChatHoverEvent;
+    private Method getChatClickEvent;
+    private Method getSiblings;
+    private Method getUnformattedTextForChat;
     private Method setInsertion;
     private Constructor<?> clickEventCtor;
     private Constructor<?> hoverEventCtor;
@@ -120,6 +123,9 @@ final class Game {
     private Method chatLineComponent;
     private Method getPlayerTeam;
     private Method getColorPrefix;
+    private Method getColorSuffix;
+    private Method appendSibling;
+    private Method createCopy;
     private Method displayTitle;
     private boolean uiResolved;
     private Constructor<?> blockPosCtor;
@@ -564,6 +570,112 @@ final class Game {
         }
     }
 
+    Object chatLineComponent(Object line) {
+        try {
+            return line == null || chatLineComponent == null ? null : chatLineComponent.invoke(line);
+        } catch (Throwable thrown) {
+            Log.once("chat component", thrown);
+            return null;
+        }
+    }
+
+    /** This component and every nested sibling, depth-first. */
+    void walkChat(Object component, java.util.List<Object> out) {
+        if (component == null || out == null) {
+            return;
+        }
+        out.add(component);
+        if (getSiblings == null) {
+            return;
+        }
+        try {
+            Object siblings = getSiblings.invoke(component);
+            if (siblings instanceof java.util.List) {
+                for (Object sibling : (java.util.List<?>) siblings) {
+                    walkChat(sibling, out);
+                }
+            }
+        } catch (Throwable thrown) {
+            Log.once("chat siblings", thrown);
+        }
+    }
+
+    String chatOwnText(Object component) {
+        try {
+            if (component == null) {
+                return null;
+            }
+            if (getUnformattedTextForChat != null) {
+                Object text = getUnformattedTextForChat.invoke(component);
+                return text instanceof String ? (String) text : null;
+            }
+            return unformatted(component);
+        } catch (Throwable thrown) {
+            Log.once("chat own text", thrown);
+            return null;
+        }
+    }
+
+    boolean hasClick(Object component) {
+        try {
+            Object style = chatStyle(component);
+            if (style == null || getChatClickEvent == null) {
+                return false;
+            }
+            return getChatClickEvent.invoke(style) != null;
+        } catch (Throwable thrown) {
+            return false;
+        }
+    }
+
+    void setHoverText(Object component, String hover) {
+        try {
+            if (component == null || hover == null || chatText == null || setChatHoverEvent == null
+                    || hoverEventCtor == null || showText == null) {
+                return;
+            }
+            Object style = ensureStyle(component);
+            if (style == null) {
+                return;
+            }
+            setChatHoverEvent.invoke(style, hoverEventCtor.newInstance(showText, chatText.newInstance(hover)));
+        } catch (Throwable thrown) {
+            Log.once("chat hover", thrown);
+        }
+    }
+
+    void setClickSuggest(Object component, String copyText) {
+        try {
+            if (component == null || copyText == null || hasClick(component) || suggestCommand == null
+                    || clickEventCtor == null || setChatClickEvent == null) {
+                return;
+            }
+            Object style = ensureStyle(component);
+            if (style == null) {
+                return;
+            }
+            setChatClickEvent.invoke(style, clickEventCtor.newInstance(suggestCommand, copyText));
+            if (setInsertion != null) {
+                setInsertion.invoke(style, copyText);
+            }
+        } catch (Throwable thrown) {
+            Log.once("chat click", thrown);
+        }
+    }
+
+    private Object chatStyle(Object component) throws Exception {
+        return component == null || getChatStyle == null ? null : getChatStyle.invoke(component);
+    }
+
+    private Object ensureStyle(Object component) throws Exception {
+        Object style = chatStyle(component);
+        if (style == null && chatStyleCtor != null && setChatStyle != null) {
+            style = chatStyleCtor.newInstance();
+            setChatStyle.invoke(component, style);
+        }
+        return style;
+    }
+
     List<?> sentChat(Object mc) throws Exception {
         resolveUi();
         if (ingameGUI == null || getChatGUI == null || getSentMessages == null || mc == null) {
@@ -776,6 +888,56 @@ final class Game {
         return chatText == null ? null : chatText.newInstance(text);
     }
 
+    /**
+     * Tab overlay uses {@code displayName} when set, otherwise the scoreboard team prefix/suffix.
+     * Keep that colour on the name and only append the flag mark after a reset.
+     */
+    Object markedTabName(Object info, String name, String mark, String tags, Object original) throws Exception {
+        resolveUi();
+        if (original != null && createCopy != null && appendSibling != null) {
+            try {
+                Object copy = createCopy.invoke(original);
+                Object extra = textComponent((mark == null ? "" : mark) + (tags == null ? "" : tags));
+                if (copy != null && extra != null) {
+                    appendSibling.invoke(copy, extra);
+                    return copy;
+                }
+            } catch (Throwable thrown) {
+                Log.once("tab copy", thrown);
+            }
+        }
+        return textComponent(teamDecorated(info, name) + (mark == null ? "" : mark) + (tags == null ? "" : tags));
+    }
+
+    /** Scoreboard team colour codes around a raw name, or the name alone. */
+    String teamDecorated(Object info, String name) {
+        String prefix = "";
+        String suffix = "";
+        try {
+            resolveUi();
+            if (info != null && getPlayerTeam != null) {
+                Object team = getPlayerTeam.invoke(info);
+                if (team != null) {
+                    if (getColorPrefix != null) {
+                        Object value = getColorPrefix.invoke(team);
+                        if (value instanceof String) {
+                            prefix = (String) value;
+                        }
+                    }
+                    if (getColorSuffix != null) {
+                        Object value = getColorSuffix.invoke(team);
+                        if (value instanceof String) {
+                            suffix = (String) value;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable thrown) {
+            Log.once("tab team", thrown);
+        }
+        return prefix + (name == null ? "" : name) + suffix;
+    }
+
     String unformatted(Object component) throws Exception {
         if (component == null || getUnformattedText == null) {
             return null;
@@ -915,6 +1077,9 @@ final class Game {
         chatStyleCtor = constructor(chatStyle);
         setChatClickEvent = method(chatStyle, "setChatClickEvent", clickEvent);
         setChatHoverEvent = method(chatStyle, "setChatHoverEvent", hoverEvent);
+        getChatClickEvent = method(chatStyle, "getChatClickEvent");
+        getSiblings = method(chatComponent, "getSiblings");
+        getUnformattedTextForChat = method(chatComponent, "getUnformattedTextForChat");
         setInsertion = method(chatStyle, "setInsertion", String.class);
         clickEventCtor = constructor(clickEvent, clickAction, String.class);
         hoverEventCtor = constructor(hoverEvent, hoverAction, chatComponent);
@@ -926,6 +1091,8 @@ final class Game {
         getDisplayName = method(playerInfo, "getDisplayName");
         setDisplayName = method(playerInfo, "setDisplayName", chatComponent);
         getUnformattedText = method(chatComponent, "getUnformattedText");
+        appendSibling = method(chatComponent, "appendSibling", chatComponent);
+        createCopy = method(chatComponent, "createCopy");
         profileId = method(gameProfile, "getId");
         profileName = method(gameProfile, "getName");
         profileGetProperties = method(gameProfile, "getProperties");
@@ -934,6 +1101,7 @@ final class Game {
         Class<?> team = type("net.minecraft.scoreboard.ScorePlayerTeam");
         getPlayerTeam = method(playerInfo, "getPlayerTeam");
         getColorPrefix = method(team, "getColorPrefix");
+        getColorSuffix = method(team, "getColorSuffix");
         displayTitle = method(ingame, "displayTitle", String.class, String.class, int.class, int.class, int.class);
     }
 
