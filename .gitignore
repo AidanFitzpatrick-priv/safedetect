@@ -3,6 +3,11 @@ build/
 run/
 _decomp/
 out/
+# Leftover Forge tree; the agent is built with agent/build.ps1
+/src/
+/build.gradle
+/gradle.properties
+/settings.gradle
 lunar-forge-mods-backup/
 *.class
 *.log
