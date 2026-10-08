@@ -1,0 +1,17 @@
+.gradle/
+build/
+run/
+_decomp/
+out/
+lunar-forge-mods-backup/
+*.class
+*.log
+*.jar
+.idea/
+*.iml
+safedetect-settings.json
+safedetect-flags.json
+safedetect-hud.json
+safedetect-hud-cmd.json
+safedetect-blacklist.txt
+safedetect-skins.json

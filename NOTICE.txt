@@ -1,0 +1,7 @@
+SafeDetect is an unofficial personal-use derivative of detector behavior from Meowtils 2.0.1.
+Meowtils author: femboytatp
+https://github.com/femboytatp/meowtils
+
+AutoBlock, NoSlow, Killaura, and Legit Scaffold checks, the sniper name list, and the
+sniper stat rule are adapted from that jar. Gameplay modules from Meowtils are not included.
+This project is not Meowtils, and it is not for distribution.
