@@ -37,6 +37,7 @@ final class OverlayColumns {
             new Column("finals", "Finals", "Final kills", 64, true),
             new Column("wins", "Wins", "Wins", 56, true),
             new Column("sniper", "Sniper", "Sniper score", 56, true),
+            new Column("nick", "Nick", "Nick confidence", 110, false),
             new Column("seen", "Seen", "Times seen", 72, false),
             new Column("last", "Last", "Last flag", 120, false) };
     /** Only shown on the Saved tab. */
@@ -108,6 +109,9 @@ final class OverlayColumns {
         }
         if ("sniper".equals(id)) {
             return row.sniper < 0 ? "" : Integer.toString(row.sniper);
+        }
+        if ("nick".equals(id)) {
+            return row.nick == null ? "" : row.nick;
         }
         if ("seen".equals(id)) {
             return seen(row.seen, row.seenAt, System.currentTimeMillis());
@@ -193,6 +197,9 @@ final class OverlayColumns {
         if ("sniper".equals(id)) {
             return row.sniper;
         }
+        if ("nick".equals(id)) {
+            return row.nick == null || row.nick.isEmpty() ? 0 : row.nick.startsWith("high") ? 2 : 1;
+        }
         if ("seen".equals(id)) {
             return row.seen;
         }
@@ -233,7 +240,7 @@ final class OverlayColumns {
     }
 
     static Color color(String id, Hud.Row row, Theme theme) {
-        if (row.friend && ("name".equals(id) || "lvl".equals(id))) {
+        if ((row.friend || row.party) && ("name".equals(id) || "lvl".equals(id))) {
             return theme.muted;
         }
         if ("lvl".equals(id) || "name".equals(id)) {
@@ -254,6 +261,10 @@ final class OverlayColumns {
         }
         if ("sniper".equals(id)) {
             return theme.heat(row.sniper, 15, 40, 70);
+        }
+        if ("nick".equals(id)) {
+            return row.nick == null || row.nick.isEmpty() ? theme.muted
+                    : row.nick.startsWith("high") ? theme.accent : theme.fg;
         }
         if ("seen".equals(id)) {
             return row.seen > 1 ? theme.fg : theme.muted;

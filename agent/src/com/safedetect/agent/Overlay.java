@@ -125,6 +125,7 @@ public final class Overlay implements SettingsPanel.Host {
         Hud.open(dir);
         long lastReopen = -1L;
         long lastRefresh = -1L;
+        long lastToggle = -1L;
         while (true) {
             try {
                 Hud.Snapshot snap = Hud.readState();
@@ -143,10 +144,14 @@ public final class Overlay implements SettingsPanel.Host {
                     }
                     boolean reopenNow = lastReopen >= 0L && snap.reopen != lastReopen;
                     boolean refreshNow = lastRefresh >= 0L && snap.refresh != lastRefresh;
+                    boolean toggleNow = lastToggle >= 0L && snap.toggle != lastToggle;
                     lastReopen = snap.reopen;
                     lastRefresh = snap.refresh;
+                    lastToggle = snap.toggle;
                     if (reopenNow) {
                         reopen();
+                    } else if (toggleNow) {
+                        toggleHidden();
                     }
                     show(snap.players, snap.lobby, snap.saved, reopenNow || refreshNow);
                 }
@@ -450,7 +455,7 @@ public final class Overlay implements SettingsPanel.Host {
                 applyModes();
             }
         }));
-        actions.add(new Glyph(Glyph.CLOSE, "Hide (reopen with /sd gui)", new Runnable() {
+        actions.add(new Glyph(Glyph.CLOSE, "Hide (Right Shift or /sd gui)", new Runnable() {
             @Override
             public void run() {
                 userHidden = true;
@@ -649,7 +654,6 @@ public final class Overlay implements SettingsPanel.Host {
             @Override
             public void run() {
                 Hud.writeUpdate();
-                openSettings("Alerts");
             }
         }));
         paintPrefs();
@@ -1192,6 +1196,33 @@ public final class Overlay implements SettingsPanel.Host {
         });
     }
 
+    static void toggleHidden() {
+        if (Boolean.getBoolean("safedetect.nogui")) {
+            return;
+        }
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                Game.useGameLoader();
+                try {
+                    Overlay overlay = instance();
+                    overlay.userHidden = !overlay.userHidden;
+                    if (overlay.userHidden) {
+                        overlay.frame.setVisible(false);
+                    } else {
+                        overlay.applyModes();
+                        overlay.ensureOnScreen();
+                        overlay.frame.setVisible(true);
+                        overlay.frame.toFront();
+                        overlay.frame.setAlwaysOnTop(true);
+                    }
+                } catch (Throwable thrown) {
+                    Log.once("overlay toggle", thrown);
+                }
+            }
+        });
+    }
+
     private static Overlay instance() {
         if (instance == null) {
             instance = new Overlay();
@@ -1215,6 +1246,7 @@ public final class Overlay implements SettingsPanel.Host {
                         .append(':').append(row.wlr).append(':').append(row.sniper).append(':').append(row.tags)
                         .append(':').append(row.team).append(':').append(row.threat).append(':').append(row.seen)
                         .append(':').append(row.blacklisted).append(':').append(row.friend).append(':')
+                        .append(row.party).append(':').append(row.nick).append(':')
                         .append(row.winstreak).append(':').append(row.last);
             }
         }

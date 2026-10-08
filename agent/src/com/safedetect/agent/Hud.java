@@ -40,6 +40,8 @@ final class Hud {
         String team = "";
         boolean blacklisted;
         boolean friend;
+        boolean party;
+        String nick = "";
         int seen = -1;
         long seenAt;
         String threat = "";
@@ -85,6 +87,7 @@ final class Hud {
     private static long lastPoll;
     private static long reopenSeq;
     private static long refreshSeq;
+    private static long toggleSeq;
     private static boolean hooked;
     private static boolean holdSpawn;
     private static String sessionText = "";
@@ -111,6 +114,13 @@ final class Hud {
 
     static void reopen() {
         reopenSeq++;
+        writeState(lastPlayers, lastLobby, lastSaved);
+        spawn(true);
+    }
+
+    /** Hide or show the overlay from an in-game keybind. */
+    static void toggle() {
+        toggleSeq++;
         writeState(lastPlayers, lastLobby, lastSaved);
         spawn(true);
     }
@@ -318,6 +328,7 @@ final class Hud {
         out.append("  \"notice\": ").append(Json.quote(notice == null ? "" : notice)).append(",\n");
         out.append("  \"reopen\": ").append(reopenSeq).append(",\n");
         out.append("  \"refresh\": ").append(refreshSeq).append(",\n");
+        out.append("  \"toggle\": ").append(toggleSeq).append(",\n");
         Settings s = settings;
         out.append("  \"options\": ").append(s == null ? "{}" : s.optionsJson()).append(",\n");
         out.append("  \"keys\": {");
@@ -363,6 +374,8 @@ final class Hud {
                 out.append(",\"team\":").append(Json.quote(row.team == null ? "" : row.team));
                 out.append(",\"bl\":").append(row.blacklisted);
                 out.append(",\"friend\":").append(row.friend);
+                out.append(",\"party\":").append(row.party);
+                out.append(",\"nick\":").append(Json.quote(row.nick == null ? "" : row.nick));
                 out.append(",\"seen\":").append(row.seen);
                 out.append(",\"seenAt\":").append(row.seenAt);
                 out.append(",\"threat\":").append(Json.quote(row.threat == null ? "" : row.threat));
@@ -481,6 +494,7 @@ final class Hud {
             snap.notice = map.get("notice") instanceof String ? (String) map.get("notice") : "";
             snap.reopen = lng(map, "reopen");
             snap.refresh = lng(map, "refresh");
+            snap.toggle = lng(map, "toggle");
             if (map.get("options") instanceof Map) {
                 snap.options.putAll((Map<String, Object>) map.get("options"));
             }
@@ -515,6 +529,8 @@ final class Hud {
             row.team = str(map, "team");
             row.blacklisted = Boolean.TRUE.equals(map.get("bl"));
             row.friend = Boolean.TRUE.equals(map.get("friend"));
+            row.party = Boolean.TRUE.equals(map.get("party"));
+            row.nick = str(map, "nick");
             row.seen = num(map, "seen");
             row.seenAt = lng(map, "seenAt");
             row.threat = str(map, "threat");
@@ -608,6 +624,7 @@ final class Hud {
         String notice = "";
         long reopen;
         long refresh;
+        long toggle;
         final Map<String, Object> options = new LinkedHashMap<String, Object>();
         final Map<String, Boolean> keysSet = new LinkedHashMap<String, Boolean>();
         List<Row> lobby = new ArrayList<Row>();

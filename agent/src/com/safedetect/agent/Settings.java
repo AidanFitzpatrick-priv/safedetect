@@ -54,6 +54,8 @@ final class Settings {
 
     boolean updateCheck = true;
     long lastUpdateCheck;
+    /** LWJGL 2 key code; default Right Shift. */
+    int overlayKey = OverlayKeys.RSHIFT;
 
     Settings(File gameDir) {
         file = new File(gameDir, "config/safedetect-settings.json");
@@ -196,7 +198,7 @@ final class Settings {
     /** Returns false when the flag name is unknown. */
     boolean setCheckEnabled(String flag, boolean on) {
         FlagStore.Flag parsed = flag(flag);
-        if (parsed == null) {
+        if (parsed == null || !CheckConfig.live(parsed)) {
             return false;
         }
         boolean changed = on ? disabledChecks.remove(parsed.name()) : disabledChecks.add(parsed.name());
@@ -286,6 +288,8 @@ final class Settings {
             acMinCps = (int) n;
         } else if ("speedLimit".equals(name) && n >= 0.3 && n <= 1.5) {
             speedLimit = n;
+        } else if ("overlayKey".equals(name) && OverlayKeys.known((int) n)) {
+            overlayKey = (int) n;
         } else {
             return false;
         }
@@ -314,6 +318,7 @@ final class Settings {
         out.append(",\"speedLimit\":").append(speedLimit);
         out.append(",\"sensitivity\":").append(Json.quote(sensitivity));
         out.append(",\"updateCheck\":").append(updateCheck);
+        out.append(",\"overlayKey\":").append(overlayKey);
         out.append(",\"disabledChecks\":[");
         int i = 0;
         for (String flag : disabledChecks) {
@@ -428,6 +433,7 @@ final class Settings {
             speedLimit = dblOf(map, "speedLimit", speedLimit);
             sensitivity = strOf(map, "sensitivity", sensitivity);
             updateCheck = boolOf(map, "updateCheck", updateCheck);
+            overlayKey = OverlayKeys.clamp(intOf(map, "overlayKey", overlayKey));
             if (map.get("lastUpdateCheck") instanceof Number) {
                 lastUpdateCheck = ((Number) map.get("lastUpdateCheck")).longValue();
             }
@@ -506,6 +512,7 @@ final class Settings {
         line(out, "speedLimit", String.valueOf(speedLimit));
         line(out, "sensitivity", Json.quote(sensitivity == null ? "normal" : sensitivity));
         line(out, "updateCheck", String.valueOf(updateCheck));
+        line(out, "overlayKey", String.valueOf(overlayKey));
         line(out, "lastUpdateCheck", String.valueOf(lastUpdateCheck));
         out.append("  \"disabledChecks\": [");
         int d = 0;

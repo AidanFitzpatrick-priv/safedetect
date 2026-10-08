@@ -361,6 +361,31 @@ final class SettingsPanel extends JPanel {
         });
         form.row("Window opacity", translucent ? null : "Not supported on this display", withValue(opacity, opacityValue));
 
+        form.section("Hotkey");
+        final JComboBox<String> hideKey = Ui.combo(theme, OverlayKeys.NAMES);
+        hideKey.setSelectedIndex(OverlayKeys.indexOf((int) Overlay.optionNumber("overlayKey", OverlayKeys.RSHIFT)));
+        hideKey.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                if (!loading) {
+                    Overlay.setOption("overlayKey", Integer.valueOf(OverlayKeys.codeAt(hideKey.getSelectedIndex())));
+                }
+            }
+        });
+        bindings.add(new Binding() {
+            @Override
+            public String name() {
+                return "overlayKey";
+            }
+
+            @Override
+            public void load() {
+                hideKey.setSelectedIndex(OverlayKeys.indexOf((int) Overlay.optionNumber("overlayKey", OverlayKeys.RSHIFT)));
+            }
+        });
+        form.row("Hide overlay", "In Minecraft, not while chat is open. /sd gui also reopens it",
+                sized(Ui.boxed(theme, hideKey), 160));
+
         form.section("Layout");
         final JComboBox<String> miniFilter = Ui.combo(theme, new String[] { "Threats only", "Everyone" });
         miniFilter.setSelectedIndex(OverlayPrefs.MINI_ALL.equals(prefs.miniFilter) ? 1 : 0);
@@ -639,8 +664,8 @@ final class SettingsPanel extends JPanel {
     private JPanel alerts() {
         Form form = new Form(2);
         form.section("In game");
-        form.row("Tab marks", "Show flags next to names in the tab list", gameToggle("tabMarks"));
-        form.row("Chat hovers", "Flags from every source when you hover a name in chat", gameToggle("chatHovers"));
+        form.row("Tab marks", "SD flags and Urchin tags next to names in tab", gameToggle("tabMarks"));
+        form.row("Chat hovers", "Tags next to names in chat, plus a flags tooltip on hover", gameToggle("chatHovers"));
         form.row("Chat alerts", "A chat line when someone is flagged", gameToggle("alertsChat"));
         form.row("Alert sound", null, gameToggle("alertSound"));
         form.row("Stay on top", "Keep the overlay above borderless Minecraft", gameToggle("borderless"));

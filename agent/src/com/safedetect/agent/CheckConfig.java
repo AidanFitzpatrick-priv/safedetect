@@ -13,8 +13,25 @@ final class CheckConfig {
     /** Live cheat checks in the order the settings panel and /sd checks list them. */
     static final FlagStore.Flag[] CHECKS = { FlagStore.Flag.KA, FlagStore.Flag.SI, FlagStore.Flag.RE,
             FlagStore.Flag.AC, FlagStore.Flag.AB, FlagStore.Flag.NS, FlagStore.Flag.VL, FlagStore.Flag.SA,
-            FlagStore.Flag.SP, FlagStore.Flag.LS, FlagStore.Flag.SS, FlagStore.Flag.GB, FlagStore.Flag.DS,
-            FlagStore.Flag.TL, FlagStore.Flag.TW };
+            FlagStore.Flag.SP, FlagStore.Flag.LS, FlagStore.Flag.SS, FlagStore.Flag.GB, FlagStore.Flag.KY,
+            FlagStore.Flag.AS, FlagStore.Flag.DS, FlagStore.Flag.TL, FlagStore.Flag.TW };
+
+    /** Removed checks. Old flag files still parse them; they are not toggles and nothing writes new ones. */
+    static boolean retired(FlagStore.Flag flag) {
+        return flag == FlagStore.Flag.BB || flag == FlagStore.Flag.FL;
+    }
+
+    static boolean live(FlagStore.Flag flag) {
+        if (flag == null || retired(flag)) {
+            return false;
+        }
+        for (int i = 0; i < CHECKS.length; i++) {
+            if (CHECKS[i] == flag) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     static final double DEFAULT_REACH = 3.35;
     static final double DEFAULT_KA_ANGLE = 80.0;
@@ -90,6 +107,8 @@ final class CheckConfig {
             case LS: return "Legit Scaffold";
             case SS: return "Sprint Scaffold";
             case GB: return "God Bridge";
+            case KY: return "Keep-Y";
+            case AS: return "Air Scaffold";
             case TL: return "Telly";
             case TW: return "Tower";
             case FL: return "Fly";
@@ -120,6 +139,8 @@ final class CheckConfig {
             case LS: return "Scripted sneak-place bridging (same crouch rhythm).";
             case SS: return "Sprints while bridging backwards.";
             case GB: return "God-bridges without sneaking.";
+            case KY: return "Keeps the same Y while bridging without sneaking.";
+            case AS: return "Places in the air looking down for too long.";
             case DS: return "Sprint-bridges on a diagonal.";
             case TL: return "Telly-bridging: fast pitch flicks while placing.";
             case TW: return "Towers up faster than placing should allow.";

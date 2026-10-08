@@ -58,6 +58,7 @@ public final class UnitChecks {
             File dir = Files.createTempDirectory("sdunit").toFile();
             dodge();
             checkConfig(dir);
+            liveChecks();
             encounters(dir);
             export();
             themesAndPrefs(dir);
@@ -88,6 +89,21 @@ public final class UnitChecks {
         check("dodge: FKDR below star minimum", rules.evaluate(false, false, false, "", -1, 9.5, 50) == null);
         check("dodge: unknown stats never trigger", rules.evaluate(false, false, false, "", -1, -1, -1) == null);
         check("dodge: friends never trigger", rules.evaluate(true, true, true, "x", 99, 20, 900) == null);
+        check("dodge: party never trigger",
+                rules.evaluate(false, true, true, true, "x", 99, 20, 900) == null);
+        LobbyChat partyChat = new LobbyChat();
+        partyChat.line("You have joined [MVP+] Pal's party");
+        check("party: joined you", LobbyIntel.inParty(partyChat, "Pal"));
+        partyChat.line("Sweat joined the party");
+        check("party: member joined", LobbyIntel.inParty(partyChat, "Sweat"));
+        check("nick: version-1 uuid",
+                LobbyIntel.nickConfidence(UUID.fromString("11111111-1111-1111-1111-111111111111"), "shown", null, false)
+                        .startsWith("high"));
+        check("nick: saved NK only",
+                LobbyIntel.nickConfidence(UUID.randomUUID(), "shown", null, true).startsWith("mid"));
+        check("nick: real account empty",
+                LobbyIntel.nickConfidence(UUID.randomUUID(), "Steve", null, false).isEmpty());
+        check("overlay key default", "Right Shift".equals(OverlayKeys.name(OverlayKeys.RSHIFT)));
         Dodge off = new Dodge(false, true, true, true, 8.0, 0, 60);
         check("dodge: disabled", off.evaluate(false, true, true, "x", 99, 20, 900) == null);
         Dodge noBl = new Dodge(true, false, true, true, 0, 0, 0);
@@ -100,6 +116,10 @@ public final class UnitChecks {
         check("settings: unknown option rejected", !settings.set("nope", Boolean.TRUE));
         check("settings: wrong type rejected", !settings.set("tabMarks", "yes"));
         check("settings: out of range rejected", !settings.set("reachFlag", 9.0));
+        check("BB is retired", CheckConfig.retired(FlagStore.Flag.BB) && !CheckConfig.live(FlagStore.Flag.BB));
+        check("FL is retired", CheckConfig.retired(FlagStore.Flag.FL) && !CheckConfig.live(FlagStore.Flag.FL));
+        check("KY is live", CheckConfig.live(FlagStore.Flag.KY));
+        check("settings: retired check cannot toggle", !settings.set("check.BB", Boolean.FALSE));
         check("settings: check toggle accepted", settings.set("check.SP", Boolean.FALSE));
         check("settings: sensitivity accepted", settings.set("sensitivity", "strict"));
         CheckConfig config = CheckConfig.from(settings);
@@ -112,6 +132,166 @@ public final class UnitChecks {
         Files2.drain(3000L);
         Settings again = new Settings(dir);
         check("settings: disabled check survives reload", !CheckConfig.from(again).enabled(FlagStore.Flag.SP));
+    }
+
+    private static PlayerView pv() {
+        PlayerView view = new PlayerView();
+        view.uuid = UUID.randomUUID();
+        view.onGround = true;
+        view.speedAmplifier = -1;
+        view.jumpAmplifier = -1;
+        return view;
+    }
+
+    private static void liveChecks() {
+        CheckConfig.use(new CheckConfig(java.util.Collections.<String>emptySet(), CheckConfig.DEFAULT_REACH,
+                CheckConfig.DEFAULT_KA_ANGLE, CheckConfig.DEFAULT_AC_CPS, CheckConfig.DEFAULT_SPEED, "normal"));
+
+        PlayerView src = pv();
+        src.posX = 1.5;
+        src.swingStart = true;
+        src.held = Game.HELD_BLOCK;
+        PlayerView dest = pv();
+        dest.copyFrom(src);
+        check("view: copyFrom keeps new fields", dest.posX == 1.5 && dest.swingStart && dest.held == Game.HELD_BLOCK);
+
+        MoveChecks speed = new MoveChecks();
+        PlayerView runner = pv();
+        for (int t = 0; t < 80; t++) {
+            runner.posX = t * 0.50;
+            speed.update(runner, t, 1, true, true);
+        }
+        check("speed: sustained 0.50 b/t flags", speed.failedSpeed());
+
+        MoveChecks lobby = new MoveChecks();
+        PlayerView flyer = pv();
+        for (int t = 0; t < 80; t++) {
+            flyer.posX = t * 0.50;
+            lobby.update(flyer, t, 1, false, true);
+        }
+        check("speed: lobby movement does not flag", !lobby.failedSpeed());
+
+        MoveChecks teleport = new MoveChecks();
+        PlayerView jumper = pv();
+        jumper.posX = 0;
+        teleport.update(jumper, 0, 1, true, true);
+        jumper.posX = 8;
+        teleport.update(jumper, 1, 1, true, true);
+        for (int t = 2; t < 30; t++) {
+            jumper.posX = 8 + (t - 2) * 0.50;
+            teleport.update(jumper, t, 1, true, true);
+        }
+        check("speed: teleport gap resets before it can flag", !teleport.failedSpeed());
+
+        Checks reach = new Checks();
+        PlayerView attacker = pv();
+        attacker.posY = 0;
+        attacker.swingStart = true;
+        attacker.swinging = true;
+        PlayerView victim = pv();
+        victim.posX = 4.2;
+        victim.hurtTime = 10;
+        victim.prevHurtTime = 0;
+        reach.melee(attacker, new PlayerView[] { attacker, victim });
+        attacker.swingStart = true;
+        reach.melee(attacker, new PlayerView[] { attacker, victim });
+        attacker.swingStart = true;
+        reach.melee(attacker, new PlayerView[] { attacker, victim });
+        check("reach: 3.7+ over three swings flags", reach.failedReach());
+
+        Checks vanilla = new Checks();
+        PlayerView close = pv();
+        close.swingStart = true;
+        close.swinging = true;
+        PlayerView near = pv();
+        near.posX = 2.4;
+        near.hurtTime = 10;
+        vanilla.melee(close, new PlayerView[] { close, near });
+        close.swingStart = true;
+        vanilla.melee(close, new PlayerView[] { close, near });
+        close.swingStart = true;
+        vanilla.melee(close, new PlayerView[] { close, near });
+        check("reach: vanilla distance does not flag", !vanilla.failedReach());
+
+        MoveChecks snap = new MoveChecks();
+        PlayerView look = pv();
+        float yaw = 0;
+        for (int i = 0; i < 5; i++) {
+            int tick = 1 + i * 10;
+            look.headYaw = yaw;
+            look.swinging = true;
+            look.swingProgressInt = 1;
+            snap.update(look, tick, 1, true, false);
+            yaw += 120;
+            look.headYaw = yaw;
+            snap.update(look, tick + 1, 1, true, false);
+            look.swinging = false;
+            look.swingProgressInt = 6;
+            snap.update(look, tick + 2, 1, true, false);
+        }
+        check("snap: five 100+ deg swing snaps flag", snap.failedSnapAim());
+
+        MoveChecks telly = new MoveChecks();
+        PlayerView flick = pv();
+        flick.held = Game.HELD_BLOCK;
+        flick.pitch = 0;
+        for (int t = 0; t < 20; t++) {
+            flick.posX = t * 0.20;
+            flick.pitch = t % 2 == 0 ? 0 : 70;
+            telly.update(flick, t, 1, true, true);
+        }
+        check("telly: eight 55+ pitch flicks while moving flag", telly.failedTelly());
+
+        MoveChecks velocity = new MoveChecks();
+        PlayerView still = pv();
+        still.sprinting = true;
+        int tick = 0;
+        for (int hit = 0; hit < 2; hit++) {
+            still.hurtTime = 0;
+            still.prevHurtTime = 0;
+            velocity.update(still, tick++, 1, true, true);
+            still.hurtTime = 10;
+            still.prevHurtTime = 0;
+            for (int wait = 0; wait < 10; wait++) {
+                velocity.update(still, tick++, 1, true, true);
+                still.prevHurtTime = 10;
+            }
+        }
+        check("velocity: two cancelled knockbacks flag", velocity.failedVelocity());
+
+        MoveChecks kb = new MoveChecks();
+        PlayerView pushed = pv();
+        pushed.sprinting = true;
+        pushed.hurtTime = 10;
+        pushed.prevHurtTime = 0;
+        kb.update(pushed, 0, 1, true, true);
+        for (int t = 1; t <= 10; t++) {
+            pushed.posX = t * 0.08;
+            pushed.prevHurtTime = 10;
+            kb.update(pushed, t, 1, true, true);
+        }
+        check("velocity: real knockback does not flag on one hit", !kb.failedVelocity());
+
+        MoveChecks keepY = new MoveChecks();
+        PlayerView flat = pv();
+        flat.held = Game.HELD_BLOCK;
+        flat.pitch = 75;
+        for (int t = 0; t < 50; t++) {
+            flat.posZ = t * 0.22;
+            keepY.update(flat, t, 1, true, true);
+        }
+        check("keep-y: unsneaking flat bridge flags", keepY.failedKeepY());
+
+        MoveChecks air = new MoveChecks();
+        PlayerView hover = pv();
+        hover.held = Game.HELD_BLOCK;
+        hover.pitch = 75;
+        hover.onGround = false;
+        for (int t = 0; t < 45; t++) {
+            hover.posX = t * 0.20;
+            air.update(hover, t, 1, true, true);
+        }
+        check("air scaffold: long air-place flags", air.failedAirScaffold());
     }
 
     private static void encounters(File dir) {
@@ -259,6 +439,13 @@ public final class UnitChecks {
         check("hover: empty", ChatHover.build("x", new ChatHover.Info()) == null);
         long now = 1_000_000_000_000L;
         check("hover: months ago", ChatHover.ago(now - 40L * 86400L * 1000L, now).contains("month"));
+
+        String branded = Tags.brand("U", "[Closet Cheater]");
+        check("tags: brand urchin closet", "[U:Closet Cheater]".equals(branded));
+        String colored = Tags.colored(branded, '5');
+        check("tags: colour for tab/chat", colored.contains("\u00a75[U:Closet Cheater]\u00a7r"));
+        check("tags: merge does not duplicate",
+                Tags.merge("[U:Cheater]", "[U:Cheater]").equals("[U:Cheater]"));
     }
 
     private static void plugins(File dir) {

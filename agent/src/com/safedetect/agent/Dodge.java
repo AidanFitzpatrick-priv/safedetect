@@ -39,7 +39,12 @@ final class Dodge {
      */
     String evaluate(boolean friend, boolean blacklisted, boolean cheat, String apiTags, int sniperScore,
             double playerFkdr, int playerStars) {
-        if (!enabled || friend) {
+        return evaluate(friend, false, blacklisted, cheat, apiTags, sniperScore, playerFkdr, playerStars);
+    }
+
+    String evaluate(boolean friend, boolean party, boolean blacklisted, boolean cheat, String apiTags, int sniperScore,
+            double playerFkdr, int playerStars) {
+        if (!enabled || friend || party) {
             return null;
         }
         if (blacklist && blacklisted) {

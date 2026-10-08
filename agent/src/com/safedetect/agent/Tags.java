@@ -230,6 +230,23 @@ final class Tags {
         return "[" + prefix + ":" + labels.trim() + "]";
     }
 
+    /** Colour each {@code [tag]} for tab and chat. */
+    static String colored(String labels, char color) {
+        if (labels == null || labels.isEmpty()) {
+            return "";
+        }
+        Matcher matcher = Pattern.compile("\\[[^\\]]+\\]").matcher(labels);
+        StringBuffer out = new StringBuffer();
+        boolean any = false;
+        while (matcher.find()) {
+            any = true;
+            matcher.appendReplacement(out,
+                    "\u00a7" + color + Matcher.quoteReplacement(matcher.group()) + "\u00a7r");
+        }
+        matcher.appendTail(out);
+        return any ? out.toString() : "\u00a7" + color + labels + "\u00a7r";
+    }
+
     static String merge(String left, String right) {
         if (right == null || right.isEmpty()) {
             return left == null ? "" : left;

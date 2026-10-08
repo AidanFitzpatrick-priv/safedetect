@@ -8,6 +8,8 @@ out/
 /build.gradle
 /gradle.properties
 /settings.gradle
+/leftover-forge/**
+!/leftover-forge/README.md
 lunar-forge-mods-backup/
 *.class
 *.log

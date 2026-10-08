@@ -4,14 +4,14 @@ Personal **Hypixel Bedwars** util for **Lunar Client 1.8.9**. It watches nearby 
 
 It is **not** a Lunar mod. It loads with `-javaagent` on the 1.8.9 profile.
 
-Current version is the `Implementation-Version` in `agent/MANIFEST.MF` (1.1.0).
+Current version is the `Implementation-Version` in `agent/MANIFEST.MF` (1.2.0).
 
 ## What it does
 
 - Live checks in a **16-chunk** range (256 blocks) around you: aura, reach, clicker, block, slow, velocity, speed, and several bridging styles.
 - Overlay window listing everyone in the lobby (from tab, `/who`, and join chat) with stars, FKDR, tags, and dodge warnings.
 - Saved flags that persist across games, with evidence (`reach 3.71, 3 long hits`) and a “seen” count.
-- Tab marks and Minecraft chat hovers that show flags from SafeDetect, Urchin, and your local blacklist — without replacing team colour.
+- Tab marks and chat names show flags from SafeDetect, Urchin, and your local blacklist — without replacing team colour. Hover a name for the full tooltip.
 - Optional Hypixel / Urchin / Aurora / anti-sniper keys for stats, nicks, and community tags.
 - A **Plugins** marketplace: bundled add-ons and drop-in jars, all commanded under `/sd`.
 
@@ -57,7 +57,7 @@ Keep Lunar in **borderless fullscreen** so the overlay stays on top.
 
 ## First run
 
-1. Open the overlay (it should appear on its own; `/sd gui` brings it back).
+1. Open the overlay (it should appear on its own; **Right Shift** hides or shows it, `/sd gui` brings it back).
 2. Click **Keys** (or Gear → Keys) and paste a [Hypixel API key](https://developer.hypixel.net/) so stars / FKDR / WLR / nicks work.
 3. Optionally add Urchin, Aurora, anti-sniper, and Discord there too. Prefer the overlay: `/sd key …` is also sent to Hypixel as an unknown command.
 4. Gear → **Plugins** to enable add-ons (QuickPlay is on by default).
@@ -91,6 +91,7 @@ A red banner lists people worth dodging. Flagged players are pinned to the top b
 | Clear | Wipe every saved tracker name (needs confirm in chat if you use `/sd clear`) |
 | Keys | API keys without typing them in chat |
 | Opacity slider | Window transparency, when the system supports it |
+| Right Shift | Hide or show the overlay (changeable under Appearance). Ignored while chat is open |
 | `/sd gui` | Reopen if you hid or closed it |
 
 Row tooltips show evidence and last-flag time.
@@ -103,13 +104,15 @@ Gear opens six pages. Appearance and Columns are saved in the overlay process. A
 
 ### Appearance
 
-Theme (**Dark**, **Light**, **Classic Hypixel**, **High contrast**), accent colour, font size, row density, opacity, mini-mode filter (threats vs everyone), group by team, pin flagged first.
+Theme (**Dark**, **Light**, **Classic Hypixel**, **High contrast**), accent colour, font size, row density, opacity, hide/show hotkey (default **Right Shift**), mini-mode filter (threats vs everyone), group by team, pin flagged first.
 
 ### Columns
 
 Pick, order, and reset lobby columns:
 
-`Lvl`, `Name`, `Team`, `Flags`, `WS`, `FKDR`, `WLR`, `Finals`, `Wins`, `Sniper`, `Seen`, `Last`
+`Lvl`, `Name`, `Team`, `Flags`, `WS`, `FKDR`, `WLR`, `Finals`, `Wins`, `Sniper`, `Nick`, `Seen`, `Last`
+
+`Nick` is optional (off by default): denick map or a version-1 UUID is **high**, a saved `NK` flag alone is **mid**. It is display-only — not a cheat check.
 
 Saved tab always uses name, flags, times flagged, and last flag.
 
@@ -164,6 +167,8 @@ Checks run only on **real players** in range, not Hypixel NPCs, not friends, not
 | LS | Legit Scaffold | Scripted sneak-place bridging (same crouch rhythm) |
 | SS | Sprint Scaffold | Sprints while bridging backwards |
 | GB | God Bridge | God-bridges without sneaking |
+| KY | Keep-Y | Same-Y bridging without sneaking |
+| AS | Air Scaffold | Places in the air looking down for too long |
 | DS | Diagonal Scaffold | Sprint-bridges on a diagonal |
 | TL | Telly | Fast pitch flicks while placing |
 | TW | Tower | Towers up faster than placing should allow |
@@ -194,7 +199,9 @@ Urchin chips (`U:…`) come from the Urchin API when a key is set:
 | U:Blatant Cheater | Obvious cheating |
 | U:Confirmed Cheater | Staff reviewed with evidence |
 
-Hover a name in **Minecraft chat** (Alerts → Chat hovers) for a Cubelify-style tooltip: SafeDetect flags + evidence, Urchin tags, and blacklist. Click still copies `/wdr` only when the name did not already have a Hypixel click action.
+**Tab** (Alerts → Tab marks) puts those chips after the name, including Urchin `U:` tags, and keeps team colour.
+
+**Chat** (Alerts → Chat hovers) does the same next to the name in the message, plus a Cubelify-style tooltip on hover: SafeDetect flags + evidence, Urchin tags, and blacklist. Click still copies `/wdr` only when the name did not already have a Hypixel click action.
 
 ---
 
@@ -208,7 +215,9 @@ Once per player per world: a red `DODGE?` chat line, a quiet sound, and a title.
 - at or above the sniper score (default **60**)
 - at or above the FKDR threshold (default **8**, optional star minimum)
 
-Each rule can be turned off under Alerts. `/sd dodge off` disables all of them. Friends never trigger dodge.
+Each rule can be turned off under Alerts. `/sd dodge off` disables all of them. Friends and current party members never trigger dodge.
+
+Old `BB` / `FL` (BedBreaker / Fly) values in saved flag files still display; they are not live checks and cannot be toggled back on.
 
 ---
 
@@ -236,7 +245,7 @@ Everything the agent understands starts with **`/sd`**. These are client-side, b
 | Command | What it does |
 | --- | --- |
 | `/sd` / `/sd help` | List commands |
-| `/sd gui` | Reopen the overlay |
+| `/sd gui` | Reopen the overlay (Right Shift also hides/shows it) |
 | `/sd list [page]` | Saved flags in chat |
 | `/sd check <name>` | One player: flags, evidence, encounters |
 | `/sd clear confirm` | Delete every saved player |

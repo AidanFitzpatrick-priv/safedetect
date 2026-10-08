@@ -139,6 +139,8 @@ final class Game {
     private Method posZGet;
     private Object bedBlock;
     private boolean worldResolved;
+    private Method keyIsDown;
+    private Method keyCreated;
 
     /**
      * Lunar's Minecraft lives on a custom loader. JNI FindClass from our worker/AWT threads uses the
@@ -235,6 +237,38 @@ final class Game {
         addChatMessage = method(playerSp, "addChatMessage", chatComponent);
         sendChatMessage = method(playerSp, "sendChatMessage", String.class);
         playSound = method(entity, "playSound", String.class, float.class, float.class);
+
+        Class<?> keyboard = type("org.lwjgl.input.Keyboard");
+        keyIsDown = method(keyboard, "isKeyDown", int.class);
+        keyCreated = method(keyboard, "isCreated");
+    }
+
+    boolean keyDown(int code) {
+        if (keyIsDown == null || code <= 0) {
+            return false;
+        }
+        try {
+            if (keyCreated != null && !Boolean.TRUE.equals(keyCreated.invoke(null))) {
+                return false;
+            }
+            return Boolean.TRUE.equals(keyIsDown.invoke(null, Integer.valueOf(code)));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    boolean chatOpen() {
+        try {
+            resolveUi();
+            Object mc = minecraft();
+            if (mc == null || currentScreen == null) {
+                return false;
+            }
+            Object screen = currentScreen.get(mc);
+            return screen != null && guiChat != null && guiChat.isInstance(screen);
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /**
@@ -641,6 +675,38 @@ final class Game {
             setChatHoverEvent.invoke(style, hoverEventCtor.newInstance(showText, chatText.newInstance(hover)));
         } catch (Throwable thrown) {
             Log.once("chat hover", thrown);
+        }
+    }
+
+    /**
+     * Puts {@code suffix} on this name piece and removes a previous one with the same {@code mark},
+     * so delayed Urchin tags can replace an empty suffix without stacking.
+     */
+    @SuppressWarnings("unchecked")
+    void setChatSuffix(Object component, String mark, String suffix) {
+        if (component == null || mark == null || mark.isEmpty() || getSiblings == null || appendSibling == null) {
+            return;
+        }
+        try {
+            Object siblings = getSiblings.invoke(component);
+            if (siblings instanceof java.util.List) {
+                java.util.List<Object> list = (java.util.List<Object>) siblings;
+                for (int i = list.size() - 1; i >= 0; i--) {
+                    String own = chatOwnText(list.get(i));
+                    if (own != null && own.contains(mark)) {
+                        list.remove(i);
+                    }
+                }
+            }
+            if (suffix == null || suffix.isEmpty()) {
+                return;
+            }
+            Object extra = textComponent(mark + suffix);
+            if (extra != null) {
+                appendSibling.invoke(component, extra);
+            }
+        } catch (Throwable thrown) {
+            Log.once("chat suffix", thrown);
         }
     }
 

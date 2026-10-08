@@ -28,6 +28,8 @@ final class FlagStore {
         LS("\u00a7c"),
         SS("\u00a7c"),
         GB("\u00a7c"),
+        KY("\u00a7c"),
+        AS("\u00a7c"),
         TL("\u00a7c"),
         TW("\u00a7c"),
         FL("\u00a7c"),

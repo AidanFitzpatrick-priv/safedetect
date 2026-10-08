@@ -16,8 +16,13 @@ final class MoveChecks {
      */
     private static final int TOWER_TICKS = 5;
     private static final int SPRINT_SCAFFOLD_TICKS = 20;
-    private static final int VELOCITY_VL = 6;
+    /** Two no-KB hits (was three); still well above vanilla knockback. */
+    private static final int VELOCITY_VL = 4;
+    /** Horizontal travel over the 8-tick watch that still counts as cancelled knockback. */
+    private static final double VELOCITY_MOVED = 0.22;
     private static final int GOD_TICKS = 60;
+    private static final int KEEP_Y_TICKS = 40;
+    private static final int AIR_SCAFFOLD_TICKS = 35;
     private static final int DIAGONAL_TICKS = 50;
     /** Vanilla jump-towering gains about 2 blocks per 20 ticks. */
     private static final double TOWER_RISE = 3.5;
@@ -63,6 +68,10 @@ final class MoveChecks {
     private boolean velocityFailed;
     private int godTicks;
     private boolean godFailed;
+    private int keepYTicks;
+    private boolean keepYFailed;
+    private int airTicks;
+    private boolean airFailed;
     private int diagTicks;
     private boolean diagFailed;
     private float lastPitch;
@@ -93,6 +102,10 @@ final class MoveChecks {
                 return String.format(java.util.Locale.US, "moved %.2f after hit", velocityMoved);
             case GB:
                 return "sprint-bridged without sneaking " + godTicks + " ticks";
+            case KY:
+                return "keep-Y bridged without sneaking " + keepYTicks + " ticks";
+            case AS:
+                return "air-placed " + airTicks + " ticks";
             case DS:
                 return "diagonal sprint-bridged " + diagTicks + " ticks";
             case TL:
@@ -143,6 +156,8 @@ final class MoveChecks {
         sprintScaffold(view, excused, dx, dz, h, speedFactor);
         velocity(view, tick, steps, h);
         godBridge(view, excused, dx, dz, h);
+        keepY(view, excused, dx, dz, dy, h);
+        airScaffold(view, excused, h);
         diagonal(view, excused, dx, dz, h);
         telly(view, tick, h);
     }
@@ -192,6 +207,14 @@ final class MoveChecks {
         return godFailed;
     }
 
+    boolean failedKeepY() {
+        return keepYFailed;
+    }
+
+    boolean failedAirScaffold() {
+        return airFailed;
+    }
+
     boolean failedDiagonal() {
         return diagFailed;
     }
@@ -209,6 +232,16 @@ final class MoveChecks {
     void resetGodBridge() {
         godFailed = false;
         godTicks = 0;
+    }
+
+    void resetKeepY() {
+        keepYFailed = false;
+        keepYTicks = 0;
+    }
+
+    void resetAirScaffold() {
+        airFailed = false;
+        airTicks = 0;
     }
 
     void resetDiagonal() {
@@ -245,7 +278,7 @@ final class MoveChecks {
         }
         kbWatch = false;
         double moved = Math.sqrt((view.posX - kbX) * (view.posX - kbX) + (view.posZ - kbZ) * (view.posZ - kbZ));
-        if (moved < 0.12) {
+        if (moved < VELOCITY_MOVED) {
             velocityVl += 2;
             velocityMoved = moved;
         } else if (velocityVl > 0) {
@@ -263,6 +296,29 @@ final class MoveChecks {
                 && !view.sneaking && view.onGround && h > 0.22 && forward > 0.12 && Math.abs(strafe) < 0.3 * h;
         godTicks = run ? godTicks + 1 : 0;
         godFailed |= godTicks > CheckConfig.current().scaled(GOD_TICKS);
+    }
+
+    /**
+     * Flat bridging at the same Y without sneaking. God bridge requires a sprint-forward; this also
+     * catches walking keep-Y machines.
+     */
+    private void keepY(PlayerView view, boolean excused, double dx, double dz, double dy, double h) {
+        double yaw = Math.toRadians(view.yaw);
+        double forward = dx * -Math.sin(yaw) + dz * Math.cos(yaw);
+        boolean run = !excused && view.held == Game.HELD_BLOCK && view.pitch >= 70.0f && !view.sneaking
+                && view.onGround && h > 0.18 && Math.abs(dy) < 0.03 && forward > 0.12;
+        keepYTicks = run ? keepYTicks + 1 : 0;
+        keepYFailed |= keepYTicks > CheckConfig.current().scaled(KEEP_Y_TICKS);
+    }
+
+    /**
+     * Looking down with a block out while airborne for longer than a jump-bridge hop.
+     */
+    private void airScaffold(PlayerView view, boolean excused, double h) {
+        boolean run = !excused && view.held == Game.HELD_BLOCK && view.pitch >= 70.0f && !view.onGround
+                && !view.sneaking && h > 0.15;
+        airTicks = run ? airTicks + 1 : 0;
+        airFailed |= airTicks > CheckConfig.current().scaled(AIR_SCAFFOLD_TICKS);
     }
 
     /**
@@ -400,6 +456,8 @@ final class MoveChecks {
         towerTicks = 0;
         sprintScaffoldTicks = 0;
         godTicks = 0;
+        keepYTicks = 0;
+        airTicks = 0;
         diagTicks = 0;
     }
 

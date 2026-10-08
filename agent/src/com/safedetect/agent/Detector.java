@@ -28,6 +28,8 @@ final class Detector {
     private static final int COMPASS = 345;
     private static final int LIST_PAGE = 8;
     private static final String TAB_MARK = "\u00a7r \u00a78\u00a7lSD\u00a7r ";
+    /** Unique sibling prefix so chat tags can be updated without stacking. */
+    private static final String CHAT_TAG_MARK = "\u00a7r\u2060 ";
     private static final double SWEAT_FKDR = 4.0;
     private static final int SWEAT_FINALS = 50;
 
@@ -90,6 +92,7 @@ final class Detector {
     private File root;
     private final Updater updater = new Updater();
     private final PluginHost plugins = new PluginHost();
+    private boolean overlayKeyDown;
     private Object chatSelf;
     private long worldSeq;
     private int sessionGames;
@@ -172,6 +175,7 @@ final class Detector {
         commands(mc, self);
         copyIfClicked(mc);
         boolean overlayCmd = overlayHud(self);
+        overlayHotkey();
         incoming(mc, self);
         int selfTicks = game.ticksExisted(self);
         boolean sameWorld = lastWorld.get() == world;
@@ -282,18 +286,14 @@ final class Detector {
             }
             try {
                 data.combat.melee(snap, snaps);
-                if (data.combat.failedKillaura()) {
-                    mark(self, snap.uuid, entity, FlagStore.Flag.KA, data.combat.evidence(FlagStore.Flag.KA));
-                    data.combat.resetKillaura();
-                }
-                if (data.combat.failedSilentAura()) {
-                    mark(self, snap.uuid, entity, FlagStore.Flag.SI, data.combat.evidence(FlagStore.Flag.SI));
-                    data.combat.resetSilentAura();
-                }
-                if (data.combat.failedReach()) {
-                    mark(self, snap.uuid, entity, FlagStore.Flag.RE, data.combat.evidence(FlagStore.Flag.RE));
-                    data.combat.resetReach();
-                }
+                final Object target = entity;
+                final UUID who = snap.uuid;
+                CheckRunner.melee(data.combat, new CheckRunner.Sink() {
+                    @Override
+                    public void flagged(FlagStore.Flag flag, String evidence) throws Exception {
+                        mark(self, who, target, flag, evidence);
+                    }
+                });
             } catch (Throwable thrown) {
                 Log.once("melee", thrown);
             }
@@ -373,27 +373,7 @@ final class Detector {
         }
         maybeAlt(self, id, npcName);
 
-        view.posX = snap.posX;
-        view.posY = snap.posY;
-        view.posZ = snap.posZ;
-        view.onGround = snap.onGround;
-        view.pitch = snap.pitch;
-        view.yaw = snap.yaw;
-        view.headYaw = snap.headYaw;
-        view.sneaking = snap.sneaking;
-        view.sprinting = snap.sprinting;
-        view.usingItem = snap.usingItem;
-        view.swinging = snap.swinging;
-        view.swingProgressInt = snap.swingProgressInt;
-        view.riding = snap.riding;
-        view.held = snap.held;
-        view.speedAmplifier = snap.speedAmplifier;
-        view.jumpAmplifier = snap.jumpAmplifier;
-        view.hurtTime = snap.hurtTime;
-        view.prevHurtTime = snap.prevHurtTime;
-        view.climbingOrSwimming = snap.climbingOrSwimming;
-        view.invisible = snap.invisible;
-        view.uuid = snap.uuid;
+        view.copyFrom(snap);
 
         Tracked data = tracked(id);
         data.checkedTick = tick;
@@ -401,54 +381,12 @@ final class Detector {
         MoveChecks movement = data.movement;
         combat.update(view, tick, elapsed);
         movement.update(view, tick, elapsed, inGame, movementData);
-        if (combat.failedAutoBlock()) {
-            mark(self, id, player, FlagStore.Flag.AB, combat.evidence(FlagStore.Flag.AB));
-            combat.resetAutoBlock();
-        }
-        if (combat.failedNoSlow()) {
-            mark(self, id, player, FlagStore.Flag.NS, combat.evidence(FlagStore.Flag.NS));
-            combat.resetNoSlow();
-        }
-        if (combat.failedLegitScaffold()) {
-            mark(self, id, player, FlagStore.Flag.LS, combat.evidence(FlagStore.Flag.LS));
-            combat.resetLegitScaffold();
-        }
-        if (combat.failedAutoclicker()) {
-            mark(self, id, player, FlagStore.Flag.AC, combat.evidence(FlagStore.Flag.AC));
-            combat.resetAutoclicker();
-        }
-        if (movement.failedSprintScaffold()) {
-            mark(self, id, player, FlagStore.Flag.SS, movement.evidence(FlagStore.Flag.SS));
-            movement.resetSprintScaffold();
-        }
-        if (movement.failedTower()) {
-            mark(self, id, player, FlagStore.Flag.TW, movement.evidence(FlagStore.Flag.TW));
-            movement.resetTower();
-        }
-        if (movement.failedSpeed()) {
-            mark(self, id, player, FlagStore.Flag.SP, movement.evidence(FlagStore.Flag.SP));
-            movement.resetSpeed();
-        }
-        if (movement.failedSnapAim()) {
-            mark(self, id, player, FlagStore.Flag.SA, movement.evidence(FlagStore.Flag.SA));
-            movement.resetSnapAim();
-        }
-        if (movement.failedVelocity()) {
-            mark(self, id, player, FlagStore.Flag.VL, movement.evidence(FlagStore.Flag.VL));
-            movement.resetVelocity();
-        }
-        if (movement.failedGodBridge()) {
-            mark(self, id, player, FlagStore.Flag.GB, movement.evidence(FlagStore.Flag.GB));
-            movement.resetGodBridge();
-        }
-        if (movement.failedDiagonal()) {
-            mark(self, id, player, FlagStore.Flag.DS, movement.evidence(FlagStore.Flag.DS));
-            movement.resetDiagonal();
-        }
-        if (movement.failedTelly()) {
-            mark(self, id, player, FlagStore.Flag.TL, movement.evidence(FlagStore.Flag.TL));
-            movement.resetTelly();
-        }
+        CheckRunner.movement(combat, movement, new CheckRunner.Sink() {
+            @Override
+            public void flagged(FlagStore.Flag flag, String evidence) throws Exception {
+                mark(self, id, player, flag, evidence);
+            }
+        });
     }
 
     private PlayerView snapshot(Object player, UUID id, boolean movementData) throws Exception {
@@ -639,7 +577,7 @@ final class Detector {
             chat(self, "\u00a77/sd list [page] \u00a78saved flags");
             chat(self, "\u00a77/sd check <name> \u00a78one player, evidence and encounters");
             chat(self, "\u00a77/sd clear confirm \u00a78delete every saved player");
-            chat(self, "\u00a77/sd gui \u00a78reopen the lobby window \u00a78(gear button: themes, columns, alerts)");
+            chat(self, "\u00a77/sd gui \u00a78reopen the lobby window \u00a78(Right Shift hides it; gear: themes, columns, alerts)");
             chat(self, "\u00a77/sd update \u00a78download the latest jar (or press Update on the overlay)");
             chat(self, "\u00a77/sd checks [code on|off] \u00a78list or toggle checks");
             chat(self, "\u00a77/sd dodge [on|off] \u00a78dodge warnings in lobbies");
@@ -1109,16 +1047,39 @@ final class Detector {
         if (name == null) {
             return false;
         }
-        ChatHover.Info info = chatHoverInfo(name);
-        String tip = ChatHover.build(name, info);
-        if (tip == null) {
+        if (text != null && text.indexOf('\u2060') >= 0) {
             return false;
         }
-        game.setHoverText(piece, tip);
-        String copy = Hud.wdr(name);
-        game.setClickSuggest(piece, copy);
-        copyTargets.add(copy);
+        ChatHover.Info info = chatHoverInfo(name);
+        String tip = ChatHover.build(name, info);
+        String suffix = nameTags(null, name);
+        if ((tip == null || tip.isEmpty()) && (suffix == null || suffix.isEmpty())) {
+            return false;
+        }
+        if (tip != null) {
+            game.setHoverText(piece, tip);
+            String copy = Hud.wdr(name);
+            game.setClickSuggest(piece, copy);
+            copyTargets.add(copy);
+        }
+        if (suffix != null && !suffix.isEmpty()) {
+            game.setChatSuffix(piece, CHAT_TAG_MARK, suffix);
+        }
         return true;
+    }
+
+    /** SD flags, blacklist, and Urchin tags for tab and inline chat. */
+    private String nameTags(UUID id, String name) {
+        String tags = store == null ? "" : store.brackets(store.get(id, name));
+        if (blacklist != null && name != null && blacklist.contains(name)
+                && (tags == null || tags.indexOf("SD:BL") < 0)) {
+            tags = (tags == null ? "" : tags) + "\u00a7c[SD:BL]\u00a7r";
+        }
+        Intel intel = intelFor(id, name);
+        if (intel != null && intel.extra != null && !intel.extra.isEmpty()) {
+            tags = tags + Tags.colored(intel.extra, '5');
+        }
+        return tags == null ? "" : tags;
     }
 
     private ChatHover.Info chatHoverInfo(String name) {
@@ -1405,11 +1366,7 @@ final class Detector {
     private void applyTags(Object self) {
         Tags.Result result;
         while ((result = tagsApi.poll()) != null) {
-            Intel info = intel.get(result.id);
-            if (info == null) {
-                info = new Intel();
-                intel.put(result.id, info);
-            }
+            Intel info = intelPut(result.id, result.name);
             if (result.labels != null && !result.labels.isEmpty()) {
                 String branded = Tags.brand(result.source, result.labels);
                 info.extra = Tags.merge(info.extra, branded);
@@ -1439,6 +1396,18 @@ final class Detector {
             }
             chat(self, "\u00a7f" + result.shown + " \u00a78-> \u00a7f" + result.real + " \u00a78(" + result.how + ")");
         }
+    }
+
+    private void overlayHotkey() {
+        if (settings == null || game.chatOpen()) {
+            overlayKeyDown = false;
+            return;
+        }
+        boolean down = game.keyDown(settings.overlayKey);
+        if (down && !overlayKeyDown) {
+            Hud.toggle();
+        }
+        overlayKeyDown = down;
     }
 
     private boolean overlayHud(Object self) {
@@ -1555,7 +1524,7 @@ final class Detector {
             FlagStore.Flag flag = Settings.flag(parts[2]);
             boolean on = "on".equalsIgnoreCase(parts[3]) || "true".equalsIgnoreCase(parts[3]);
             boolean off = "off".equalsIgnoreCase(parts[3]) || "false".equalsIgnoreCase(parts[3]);
-            if (flag == null || !Arrays.asList(CheckConfig.CHECKS).contains(flag) || (!on && !off)) {
+            if (flag == null || !CheckConfig.live(flag) || (!on && !off)) {
                 chat(self, "\u00a77Usage: /sd checks <code> on|off \u00a78e.g. /sd checks SP off");
                 return;
             }
@@ -1710,6 +1679,8 @@ final class Detector {
             return null;
         }
         boolean friend = skipped(name);
+        boolean party = LobbyIntel.inParty(lobbyChat, name);
+        String shown = name;
         if (settings != null) {
             name = settings.realName(name);
         }
@@ -1743,10 +1714,13 @@ final class Detector {
                 finals, wins, sniper);
         row.blacklisted = listed;
         row.friend = friend;
+        row.party = party;
+        row.nick = LobbyIntel.nickConfidence(id, shown, settings,
+                record != null && record.flags.contains(FlagStore.Flag.NK.name()));
         row.team = game.tabTeamColor(tabInfo, id == null ? null : nearbyEntities.get(id));
         row.evidence = newestDetail(record);
         boolean cheat = store.hasCheat(record) && !flaggedHere.contains(label.toLowerCase(Locale.ROOT));
-        row.threat = Dodge.from(settings).evaluate(friend, listed, cheat,
+        row.threat = Dodge.from(settings).evaluate(friend, party, listed, cheat,
                 info == null ? "" : info.extra, info == null ? -1 : sniper, fkdr, stars);
         Encounters.Entry seen = encounters == null ? null : encounters.saw(id, label, worldSeq);
         if (seen != null) {
@@ -1869,7 +1843,7 @@ final class Detector {
                 if (current != tabApplied.get(id) && !ourTab(id, current)) {
                     tabOriginal.put(id, current);
                 }
-                String tags = showMarks ? store.brackets(store.get(id, name)) : "";
+                String tags = showMarks ? nameTags(id, name) : "";
                 String extra = plugins.suffix(id);
                 if (tags.isEmpty() && extra.isEmpty()) {
                     if (tabApplied.containsKey(id) || ourTab(id, current)) {
