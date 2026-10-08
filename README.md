@@ -16,6 +16,12 @@ That writes `agent\out\safedetect-agent.jar`, runs the unit checks and the mock-
 
 ## Install
 
+The easy way: download `SafeDetect-vX.Y.Z.zip` from [Releases](https://github.com/AidanFitzpatrick-priv/safedetect/releases/latest), extract it, run `install.bat`, and paste the JVM argument it copies to your clipboard into Lunar (step 2 below).
+
+To publish a release, bump `Implementation-Version` in `agent\MANIFEST.MF`, commit and push, then run `powershell -ExecutionPolicy Bypass -File agent\release.ps1`.
+
+By hand:
+
 1. Copy `safedetect-agent.jar` to `%APPDATA%\.minecraft\safedetect\`.
 2. In Lunar Client, select **1.8.9** → JVM arguments, and add:
 
